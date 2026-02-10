@@ -1,0 +1,4 @@
+project_id = "oylckbkllrefwyozuvlt"
+
+[functions.pumi-proxy]
+verify_jwt = false
