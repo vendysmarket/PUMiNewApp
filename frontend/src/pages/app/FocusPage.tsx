@@ -14,6 +14,7 @@ import { WizardData, FocusPlanMeta, FocusType } from "@/types/focusWizard";
 import type { FocusOutline, PlanDay } from "@/types/learningFocus";
 import { focusApi } from "@/lib/focusApi";
 import { pumiInvoke } from "@/lib/pumiInvoke";
+import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
 
 // ============================================================================
 // Helpers
@@ -228,132 +229,153 @@ export default function FocusPage() {
       setView("outline");
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    
+
+    // Extract wizard data
+    const message = `${data.step2.goalSentence}`;
+    const domain = data.step1.focusType === "language" ? "language" : "other";
+    let level = "beginner";
+    let minutesPerDay = 20;
+
+    if (data.step3 && "level" in data.step3) {
+      level = data.step3.level;
+      minutesPerDay = data.step3.minutesPerDay;
+    } else if (data.step3 && "minutesPerDay" in data.step3) {
+      minutesPerDay = data.step3.minutesPerDay;
+    }
+
+    // Helper: finish wizard with parsed outline + plan_id
+    const finishWithPlan = (parsedOutline: any, planId: string) => {
+      localStorage.setItem("pumi_focus_plan_id", planId);
+      setOutline(parsedOutline);
+      setPlanMeta({
+        id: planId,
+        focusType: data.step1.focusType || "custom",
+        goal: data.step2.goalSentence,
+        durationDays: data.step2.durationDays,
+        minutesPerDay,
+        startedAt: new Date().toISOString(),
+        currentDayIndex: 1,
+        completedDays: [],
+        streak: 0,
+        archived: false,
+      });
+      setView("outline");
+    };
+
     try {
-      // Build prompt from wizard data
-      const focusTypeLabel = {
-        language: "nyelvtanulás",
-        project: "projekt",
-        study: "tanulás",
-        habit: "szokás kialakítása",
-        custom: "egyedi cél",
-      }[data.step1.focusType || "custom"];
-      
-      let message = `${data.step2.goalSentence}`;
-      let domain = data.step1.focusType === "language" ? "language" : "other";
-      let level = "beginner";
-      let minutesPerDay = 20;
-      
-      if (data.step3 && "level" in data.step3) {
-        level = data.step3.level;
-        minutesPerDay = data.step3.minutesPerDay;
-      } else if (data.step3 && "minutesPerDay" in data.step3) {
-        minutesPerDay = data.step3.minutesPerDay;
-      }
-      
-      const result = await pumiInvoke<{ ok: boolean; outline?: any; text?: string; error?: string; detail?: string }>("/chat/enhanced", {
-        mode: "focus_outline",
-        message,
-        lang: "hu",
+      // ── PRIMARY: Direct backend via FocusApiClient ──
+      console.log("[FOCUS] Trying direct backend outline...");
+      const outlineResp = await backendApi.outline(message, {
         domain,
         level,
         minutes_per_day: minutesPerDay,
-        duration: data.step2.durationDays,
-        tone: data.step4.tone,
-        difficulty: data.step4.difficulty,
-        pacing: data.step4.pacing,
-        include_exercise: true,
-        include_translation: true,
-        include_writing: true,
+        duration_days: data.step2.durationDays,
       });
-      
-      if (result.ok && (result.outline || result.text)) {
-        let parsedOutline = result.outline;
-        
-        // ✅ Handle case where outline is in 'text' field as JSON string
-        if (!parsedOutline && result.text) {
-          try {
-            const textParsed = JSON.parse(result.text);
-            parsedOutline = textParsed.outline || textParsed;
-          } catch (e) {
-            console.error("[FOCUS] Failed to parse text field:", e);
-          }
-        }
-        
-        if (typeof parsedOutline === "string") {
-          try {
-            parsedOutline = JSON.parse(parsedOutline);
-            parsedOutline = parsedOutline.outline || parsedOutline;
-          } catch {}
-        }
-        
-        if (parsedOutline && parsedOutline.days) {
-          console.log("[FOCUS] Outline parsed successfully:", parsedOutline);
-          
-          // ✅ Transform days to backend format (dayIndex + items)
-          const transformedDays = parsedOutline.days.map((d: any) => ({
-            dayIndex: d.day,
-            title: d.title,
-            intro: d.intro,
-            items: [], // Backend will populate items on start-day
-          }));
-          
-          // ✅ Call State Engine to create plan
-          console.log("[FOCUS] Calling create-plan with transformed days:", transformedDays);
-          const createPlanResult = await focusApi.createPlan({
-            title: parsedOutline.title,
-            message: data.step2.goalSentence, // Required by backend
-            days: transformedDays,
-            domain: parsedOutline.domain || domain,
-            level: parsedOutline.level || level,
-            minutes_per_day: parsedOutline.minutes_per_day || minutesPerDay,
-            lang: "hu",
-          });
-          
-          if (!createPlanResult.ok) {
-            setError("Terv létrehozása sikertelen a szerverben");
-            return;
-          }
-          
-          console.log("[FOCUS] Plan created:", createPlanResult.plan_id);
-          
-          // Save plan_id to localStorage
-          localStorage.setItem("pumi_focus_plan_id", createPlanResult.plan_id);
-          
-          setOutline(parsedOutline);
-          
-          // Create plan meta with backend plan_id
-          const newMeta: FocusPlanMeta = {
-            id: createPlanResult.plan_id,
-            focusType: data.step1.focusType || "custom",
-            goal: data.step2.goalSentence,
-            durationDays: data.step2.durationDays,
-            minutesPerDay,
-            startedAt: new Date().toISOString(),
-            currentDayIndex: 1,
-            completedDays: [],
-            streak: 0,
-            archived: false,
-          };
-          setPlanMeta(newMeta);
-          
-          setView("outline");
-        } else {
-          console.error("[FOCUS] Invalid outline format:", parsedOutline);
-          setError("Érvénytelen outline formátum");
-        }
-      } else {
-        // Handle error response from API
-        const errorMsg = result.error || result.detail || "Terv generálás sikertelen";
-        console.error("[FOCUS] API error:", errorMsg);
-        setError(parseNetworkError(new Error(errorMsg)));
+
+      const outlineData = outlineResp.outline;
+      const days = outlineData?.days ?? outlineData ?? [];
+
+      if (!Array.isArray(days) || days.length === 0) {
+        throw new Error("Direct backend returned empty outline");
       }
-    } catch (err) {
-      console.error("[FOCUS] Wizard complete error:", err);
-      setError(parseNetworkError(err));
+
+      console.log("[FOCUS] Direct backend outline OK:", outlineData);
+
+      const createResult = await backendApi.createPlan({
+        title: outlineData?.title || message,
+        domain: outlineData?.domain || domain,
+        level: outlineData?.level || level,
+        mode: "learning",
+        minutes_per_day: outlineData?.minutes_per_day || minutesPerDay,
+        days,
+      });
+
+      if (!createResult.ok) {
+        throw new Error("Direct backend create-plan failed");
+      }
+
+      console.log("[FOCUS] Direct backend plan created:", createResult.plan_id);
+      finishWithPlan(outlineData, createResult.plan_id);
+    } catch (directErr) {
+      // ── FALLBACK: pumiInvoke proxy (original flow) ──
+      console.warn("[FOCUS] Direct backend failed, falling back to proxy:", directErr);
+
+      try {
+        const result = await pumiInvoke<{ ok: boolean; outline?: any; text?: string; error?: string; detail?: string }>("/chat/enhanced", {
+          mode: "focus_outline",
+          message,
+          lang: "hu",
+          domain,
+          level,
+          minutes_per_day: minutesPerDay,
+          duration: data.step2.durationDays,
+          tone: data.step4.tone,
+          difficulty: data.step4.difficulty,
+          pacing: data.step4.pacing,
+          include_exercise: true,
+          include_translation: true,
+          include_writing: true,
+        });
+
+        if (result.ok && (result.outline || result.text)) {
+          let parsedOutline = result.outline;
+
+          if (!parsedOutline && result.text) {
+            try {
+              const textParsed = JSON.parse(result.text);
+              parsedOutline = textParsed.outline || textParsed;
+            } catch (e) {
+              console.error("[FOCUS] Failed to parse text field:", e);
+            }
+          }
+
+          if (typeof parsedOutline === "string") {
+            try {
+              parsedOutline = JSON.parse(parsedOutline);
+              parsedOutline = parsedOutline.outline || parsedOutline;
+            } catch {}
+          }
+
+          if (parsedOutline && parsedOutline.days) {
+            console.log("[FOCUS] Fallback outline parsed:", parsedOutline);
+
+            const transformedDays = parsedOutline.days.map((d: any) => ({
+              dayIndex: d.day,
+              title: d.title,
+              intro: d.intro,
+              items: [],
+            }));
+
+            const createPlanResult = await focusApi.createPlan({
+              title: parsedOutline.title,
+              message: data.step2.goalSentence,
+              days: transformedDays,
+              domain: parsedOutline.domain || domain,
+              level: parsedOutline.level || level,
+              minutes_per_day: parsedOutline.minutes_per_day || minutesPerDay,
+              lang: "hu",
+            });
+
+            if (!createPlanResult.ok) {
+              setError("Terv létrehozása sikertelen a szerverben");
+              return;
+            }
+
+            finishWithPlan(parsedOutline, createPlanResult.plan_id);
+          } else {
+            setError("Érvénytelen outline formátum");
+          }
+        } else {
+          const errorMsg = result.error || result.detail || "Terv generálás sikertelen";
+          setError(parseNetworkError(new Error(errorMsg)));
+        }
+      } catch (fallbackErr) {
+        console.error("[FOCUS] Both backends failed:", fallbackErr);
+        setError(parseNetworkError(fallbackErr));
+      }
     } finally {
       setLoading(false);
     }
@@ -363,66 +385,101 @@ export default function FocusPage() {
   // START DAY
   // ============================================================================
   
+  // Helper: commit started day into component state
+  const commitDay = (day: any, dayIdx: number) => {
+    setCurrentDay(day);
+    setCompletedItemIds([]);
+    setView("day");
+    localStorage.setItem(IN_PROGRESS_KEY, "1");
+    setInProgress(true);
+    dispatchFocusProgressChange();
+    if (planMeta) setPlanMeta({ ...planMeta, currentDayIndex: dayIdx });
+  };
+
   const handleStartDay = async (dayIndex: number) => {
     if (!outline || !planMeta) return;
-    
+
     setLoadingDay(dayIndex);
     setSelectedDayIndex(dayIndex);
     setError(null);
-    
+
+    const planId = localStorage.getItem("pumi_focus_plan_id");
+
     try {
-      const selectedDay = outline.days?.[dayIndex - 1];
-      const dayTitle = selectedDay?.title || `Nap ${dayIndex}`;
-      
-      const result = await pumiInvoke<{ ok: boolean; day?: any; text?: string; error?: string }>("/chat/enhanced", {
-        mode: "focus_day",
-        day_index: dayIndex,
-        outline,
-        message: `Generate day ${dayIndex}: ${dayTitle}`,
-        lang: "hu",
-        include_exercise: true,
-        include_translation: true,
-        include_writing: true,
-      });
-      
-      if (result.ok) {
-        let day = result.day;
-        
-        if (typeof day === "string") {
-          try {
-            day = JSON.parse(day);
-            day = day.day || day;
-          } catch {}
+      // ── PRIMARY: Direct backend via FocusApiClient ──
+      if (planId) {
+        console.log("[FOCUS] Trying direct backend start-day...");
+        const started = await backendApi.startDay(planId);
+
+        if (started.ok) {
+          const dayIdx = started.day?.day_index ?? dayIndex;
+          const dayData = await backendApi.getDay(planId, dayIdx);
+
+          if (dayData.ok && dayData.day) {
+            const day = {
+              ...dayData.day,
+              items: dayData.items ?? dayData.day.items ?? [],
+            };
+
+            if (day.items && day.items.length > 0) {
+              console.log("[FOCUS] Direct backend day loaded:", day);
+              commitDay(day, dayIndex);
+              return;
+            }
+          }
         }
-        
-        if (!day && result.text) {
-          try {
-            day = JSON.parse(result.text);
-            day = day.day || day;
-          } catch {}
-        }
-        
-        if (day && day.items) {
-          setCurrentDay(day);
-          setCompletedItemIds([]); // Reset for new day
-          setView("day");
-          
-          // Set in-progress + notify other components
-          localStorage.setItem(IN_PROGRESS_KEY, "1");
-          setInProgress(true);
-          dispatchFocusProgressChange();
-          
-          // Update current day index
-          setPlanMeta({ ...planMeta, currentDayIndex: dayIndex });
-        } else {
-          setError("Érvénytelen nap formátum");
-        }
-      } else {
-        setError(result.error || "Nap generálás sikertelen");
+        // If we get here, direct backend didn't return usable data
+        throw new Error("Direct backend start-day returned incomplete data");
       }
-    } catch (err) {
-      console.error("[FOCUS] Start day error:", err);
-      setError(parseNetworkError(err));
+      throw new Error("No planId for direct backend");
+    } catch (directErr) {
+      // ── FALLBACK: pumiInvoke proxy (original flow) ──
+      console.warn("[FOCUS] Direct backend start-day failed, falling back:", directErr);
+
+      try {
+        const selectedDay = outline.days?.[dayIndex - 1];
+        const dayTitle = selectedDay?.title || `Nap ${dayIndex}`;
+
+        const result = await pumiInvoke<{ ok: boolean; day?: any; text?: string; error?: string }>("/chat/enhanced", {
+          mode: "focus_day",
+          day_index: dayIndex,
+          outline,
+          message: `Generate day ${dayIndex}: ${dayTitle}`,
+          lang: "hu",
+          include_exercise: true,
+          include_translation: true,
+          include_writing: true,
+        });
+
+        if (result.ok) {
+          let day = result.day;
+
+          if (typeof day === "string") {
+            try {
+              day = JSON.parse(day);
+              day = day.day || day;
+            } catch {}
+          }
+
+          if (!day && result.text) {
+            try {
+              day = JSON.parse(result.text);
+              day = day.day || day;
+            } catch {}
+          }
+
+          if (day && day.items) {
+            commitDay(day, dayIndex);
+          } else {
+            setError("Érvénytelen nap formátum");
+          }
+        } else {
+          setError(result.error || "Nap generálás sikertelen");
+        }
+      } catch (fallbackErr) {
+        console.error("[FOCUS] Both backends failed for start-day:", fallbackErr);
+        setError(parseNetworkError(fallbackErr));
+      }
     } finally {
       setLoadingDay(null);
     }

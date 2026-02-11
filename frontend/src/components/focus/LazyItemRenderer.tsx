@@ -6,6 +6,7 @@ import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
 import { TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
 import { pumiInvoke } from "@/lib/pumiInvoke";
+import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
 
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
@@ -111,15 +112,47 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
     setError(null);
 
     const fetchPromise = (async (): Promise<StrictFocusItem | null> => {
+      // Helper: validate + cache a raw content object
+      const validateAndCache = (raw: any): StrictFocusItem | null => {
+        const validation = validateFocusItem(raw);
+        if (validation.valid) {
+          const strict = raw as StrictFocusItem;
+          localStorage.setItem(cacheKey, JSON.stringify({ content: strict, timestamp: Date.now() }));
+          return strict;
+        }
+        if (validation.repaired) {
+          console.log(`[REPAIR] Item ${item.id} repaired:`, validation.errors);
+          localStorage.setItem(cacheKey, JSON.stringify({ content: validation.repaired, timestamp: Date.now() }));
+          return validation.repaired;
+        }
+        return null;
+      };
+
+      // ── PRIMARY: Direct backend via FocusApiClient ──
+      try {
+        console.log(`[API DIRECT] Fetching content for: ${item.id}`);
+        const directResp = await backendApi.generateItemContent(item.id);
+        if (directResp.ok && directResp.content) {
+          const validated = validateAndCache(directResp.content);
+          if (validated) {
+            console.log(`[API DIRECT] Content loaded for: ${item.id}`);
+            return validated;
+          }
+        }
+        throw new Error("Direct backend returned invalid content");
+      } catch (directErr) {
+        console.warn(`[API DIRECT] Failed for ${item.id}, falling back:`, directErr);
+      }
+
+      // ── FALLBACK: pumiInvoke proxy (original flow) ──
       let attempts = 0;
-      const maxAttempts = 2; // 1 initial + 1 retry
+      const maxAttempts = 2;
 
       while (attempts < maxAttempts) {
         attempts++;
         try {
-          console.log(`[API CALL] Fetching content for: ${item.id} (attempt ${attempts})`);
-          
-          // Use pumiInvoke
+          console.log(`[API PROXY] Fetching content for: ${item.id} (attempt ${attempts})`);
+
           const data = await pumiInvoke<{ ok: boolean; content?: any; error?: string }>(
             "/chat/focus-item-content",
             {
@@ -139,46 +172,26 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
           );
 
           if (data.ok && data.content) {
-            // Validate and repair if needed
-            const validation = validateFocusItem(data.content);
-            
-            if (validation.valid) {
-              // Already valid strict item
-              const strictContent = data.content as StrictFocusItem;
-              const cacheEntry: CacheEntry = {
-                content: strictContent,
-                timestamp: Date.now(),
-              };
-              localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-              return strictContent;
-            } else if (validation.repaired) {
-              console.log(`[REPAIR] Item ${item.id} repaired:`, validation.errors);
-              const cacheEntry: CacheEntry = {
-                content: validation.repaired,
-                timestamp: Date.now(),
-              };
-              localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-              return validation.repaired;
-            }
+            const validated = validateAndCache(data.content);
+            if (validated) return validated;
           }
-          
-          // If we got here without success, throw to trigger retry
+
           throw new Error(data.error || "Failed to load content");
         } catch (err) {
           console.error(`[ERROR] Attempt ${attempts} failed for ${item.id}:`, err);
-          
+
           if (attempts < maxAttempts) {
             console.log(`[RETRY] Retrying ${item.id}...`);
             continue;
           }
-          
+
           // After all retries, use fallback template
           console.log(`[FALLBACK] Using fallback template for ${item.id}`);
           const fallback = getFallbackTemplate(
             detectKindFromItem(item),
             item.topic || item.label
           );
-          
+
           const cacheEntry: CacheEntry = {
             content: fallback,
             timestamp: Date.now(),
@@ -187,7 +200,7 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
           return fallback;
         }
       }
-      
+
       return null;
     })();
 
