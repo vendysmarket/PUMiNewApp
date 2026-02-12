@@ -6,7 +6,7 @@
 export const FOCUS_ITEM_SCHEMA_VERSION = "1.0";
 
 // Canonical item kinds - deterministic mapping from backend modes
-export type FocusItemKind = "translation" | "quiz" | "cards" | "roleplay" | "writing" | "checklist";
+export type FocusItemKind = "lesson" | "translation" | "quiz" | "cards" | "roleplay" | "writing" | "checklist";
 
 // Input types for different kinds
 export type FocusInputType = "text" | "multi_text" | "choice" | "flip" | "chat" | "checkbox";
@@ -98,7 +98,22 @@ export interface ChecklistContent {
   proof_prompt?: string;
 }
 
-export type FocusItemContent = 
+// Lesson: rich educational content (tananyag)
+export interface LessonContent {
+  title: string;
+  summary: string;
+  key_points: string[];
+  example?: string;
+  micro_task?: {
+    instruction: string;
+    expected_output?: string;
+  };
+  common_mistakes?: string[];
+  estimated_minutes?: number;
+}
+
+export type FocusItemContent =
+  | { kind: "lesson"; data: LessonContent }
   | { kind: "translation"; data: TranslationContent }
   | { kind: "quiz"; data: QuizContent }
   | { kind: "cards"; data: CardsContent }
@@ -153,6 +168,11 @@ export interface StrictFocusItem {
 // ============================================================================
 
 export const BACKEND_MODE_TO_KIND: Record<string, FocusItemKind> = {
+  // Lesson / content mappings
+  lesson: "lesson",
+  content: "lesson",
+  tananyag: "lesson",
+
   // Direct mappings
   translation: "translation",
   quiz: "quiz",
@@ -165,7 +185,7 @@ export const BACKEND_MODE_TO_KIND: Record<string, FocusItemKind> = {
   writing: "writing",
   write: "writing",
   practice: "writing",
-  
+
   // Offline/speaking -> checklist with proof
   speaking: "checklist",
   offline: "checklist",
@@ -180,6 +200,9 @@ export const BACKEND_MODE_TO_KIND: Record<string, FocusItemKind> = {
 // ============================================================================
 
 export const DEFAULT_VALIDATION: Record<FocusItemKind, FocusValidation> = {
+  lesson: {
+    require_interaction: true,
+  },
   translation: {
     require_interaction: true,
     min_items: 1,
@@ -213,6 +236,7 @@ export const DEFAULT_VALIDATION: Record<FocusItemKind, FocusValidation> = {
 // ============================================================================
 
 export const DEFAULT_SCORING: Record<FocusItemKind, FocusScoring> = {
+  lesson: { max_points: 100, partial_credit: false, auto_grade: false },
   translation: { max_points: 100, partial_credit: true, auto_grade: true },
   quiz: { max_points: 100, partial_credit: true, auto_grade: true },
   cards: { max_points: 100, partial_credit: false, auto_grade: false },
@@ -226,6 +250,7 @@ export const DEFAULT_SCORING: Record<FocusItemKind, FocusScoring> = {
 // ============================================================================
 
 export const KIND_TO_INPUT_TYPE: Record<FocusItemKind, FocusInputType> = {
+  lesson: "text",
   translation: "multi_text",
   quiz: "choice",
   cards: "flip",

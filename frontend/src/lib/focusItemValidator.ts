@@ -8,6 +8,7 @@ import {
   type FocusItemKind,
   type FocusItemContent,
   type FocusValidation,
+  type LessonContent,
   FOCUS_ITEM_SCHEMA_VERSION,
   BACKEND_MODE_TO_KIND,
   DEFAULT_VALIDATION,
@@ -56,6 +57,10 @@ export function detectKindFromRaw(raw: any): FocusItemKind {
   
   // Content-based detection
   if (raw?.content) {
+    // Lesson detection: has summary or key_points (rich educational content)
+    if (raw.content.summary || raw.content.key_points) {
+      return "lesson";
+    }
     if (raw.content.sentences && Array.isArray(raw.content.sentences)) {
       return "translation";
     }
@@ -94,8 +99,14 @@ export function detectKindFromRaw(raw: any): FocusItemKind {
 
 function extractContent(raw: any, kind: FocusItemKind): FocusItemContent {
   const content = raw?.content;
-  
+
   switch (kind) {
+    case "lesson":
+      return {
+        kind: "lesson",
+        data: extractLessonContent(raw),
+      };
+
     case "translation":
       return {
         kind: "translation",
@@ -150,6 +161,23 @@ function extractContent(raw: any, kind: FocusItemKind): FocusItemContent {
         },
       };
   }
+}
+
+function extractLessonContent(raw: any): LessonContent {
+  const content = raw?.content;
+  // Backend sends: { title, summary, key_points[], example, micro_task: { instruction, expected_output }, common_mistakes[], estimated_minutes }
+  // Also handle the case where data is nested under content.data or directly under content
+  const src = content?.data || content || {};
+
+  return {
+    title: src.title || raw?.title || raw?.label || "Tananyag",
+    summary: src.summary || src.text || raw?.text || "",
+    key_points: Array.isArray(src.key_points) ? src.key_points : [],
+    example: src.example,
+    micro_task: src.micro_task || undefined,
+    common_mistakes: Array.isArray(src.common_mistakes) ? src.common_mistakes : undefined,
+    estimated_minutes: src.estimated_minutes,
+  };
 }
 
 function extractTranslationSentences(raw: any): Array<{ source: string; target_lang: string; hint?: string }> {
@@ -360,7 +388,7 @@ function isValidStrictFocusItem(item: any): item is StrictFocusItem {
 }
 
 function isValidKind(kind: any): kind is FocusItemKind {
-  return ["translation", "quiz", "cards", "roleplay", "writing", "checklist"].includes(kind);
+  return ["lesson", "translation", "quiz", "cards", "roleplay", "writing", "checklist"].includes(kind);
 }
 
 // ============================================================================
@@ -369,6 +397,27 @@ function isValidKind(kind: any): kind is FocusItemKind {
 
 export function getFallbackTemplate(kind: FocusItemKind, topic: string): StrictFocusItem {
   const templates: Record<FocusItemKind, StrictFocusItem> = {
+    lesson: {
+      schema_version: FOCUS_ITEM_SCHEMA_VERSION,
+      kind: "lesson",
+      title: "Tananyag",
+      subtitle: topic,
+      instructions_md: "Olvasd el az alábbi tananyagot:",
+      ui: { mode: "inline", estimated_minutes: 5 },
+      input: { type: "text" },
+      content: {
+        kind: "lesson",
+        data: {
+          title: topic,
+          summary: `Ismerkedj meg a következő témával: ${topic}`,
+          key_points: ["Figyeld meg a fő fogalmakat", "Próbáld megérteni az összefüggéseket"],
+          example: undefined,
+          micro_task: { instruction: "Foglald össze egy mondatban, mit tanultál!" },
+        },
+      },
+      validation: { require_interaction: true },
+      scoring: { max_points: 100, partial_credit: false },
+    },
     translation: {
       schema_version: FOCUS_ITEM_SCHEMA_VERSION,
       kind: "translation",

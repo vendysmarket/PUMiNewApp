@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import type { PlanItem, ItemContent } from "@/types/learningFocus";
 import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
-import { TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
+import { LessonRenderer, TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
 import { focusApi } from "@/lib/focusApi";
 
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
@@ -195,6 +195,7 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
   const getIcon = () => {
     const kind = strictItem?.kind || detectKindFromItem(item);
     switch (kind) {
+      case "lesson": return <BookOpen className="w-5 h-5 text-indigo-500" />;
       case "translation": return <PenLine className="w-5 h-5 text-blue-500" />;
       case "quiz": return <HelpCircle className="w-5 h-5 text-purple-500" />;
       case "cards": return <Layers className="w-5 h-5 text-orange-500" />;
@@ -208,6 +209,7 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
   const getTypeLabel = () => {
     const kind = strictItem?.kind || detectKindFromItem(item);
     switch (kind) {
+      case "lesson": return "Tananyag";
       case "translation": return "Fordítás";
       case "quiz": return "Kvíz";
       case "cards": return "Kártyák";
@@ -411,6 +413,7 @@ function detectKindFromItem(item: PlanItem): FocusItemKind {
   const rawPracticeType = (item.practice_type || "").toLowerCase();
   
   // Direct mappings
+  if (rawType === "lesson" || rawType === "content" || rawType === "tananyag") return "lesson";
   if (rawType === "translation" || rawPracticeType === "translation") return "translation";
   if (rawType === "quiz") return "quiz";
   if (rawType === "flashcard" || rawType === "cards") return "cards";
@@ -442,6 +445,17 @@ function StrictContentRenderer({
   const content = item.content;
   
   switch (item.kind) {
+    case "lesson":
+      if (content.kind === "lesson") {
+        return (
+          <LessonRenderer
+            content={content.data}
+            onValidationChange={onValidationChange}
+          />
+        );
+      }
+      break;
+
     case "translation":
       if (content.kind === "translation") {
         return (
