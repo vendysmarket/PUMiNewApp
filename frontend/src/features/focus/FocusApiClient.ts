@@ -55,6 +55,20 @@ export type CreatePlanInput = {
   pacing?: string;
   force_new?: boolean;
   duration_days?: number;
+  /** Pre-built days from syllabus generator. If provided, overrides buildDays(). */
+  prebuilt_days?: Array<{
+    dayIndex: number;
+    title: string;
+    intro: string;
+    items: Array<{
+      itemKey: string;
+      type: string;
+      practiceType: string | null;
+      topic: string;
+      label: string;
+      estimatedMinutes: number;
+    }>;
+  }>;
 };
 
 function buildDays(durationDays: number, title: string) {
@@ -72,6 +86,8 @@ export const focusApi = {
     const mode: FocusMode =
       input.mode ?? (input.domain === "project" ? "project" : "learning");
 
+    const days = input.prebuilt_days || buildDays(input.duration_days ?? 7, input.title);
+
     return post<{ ok: boolean; plan_id: string }>("/focus/create-plan", {
       title: input.title,
       domain: input.domain,
@@ -83,7 +99,7 @@ export const focusApi = {
       difficulty: input.difficulty ?? "",
       pacing: input.pacing ?? "",
       force_new: input.force_new ?? false,
-      days: buildDays(input.duration_days ?? 7, input.title),
+      days,
     });
   },
 

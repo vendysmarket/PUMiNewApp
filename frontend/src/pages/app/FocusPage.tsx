@@ -14,6 +14,8 @@ import { WizardData, FocusPlanMeta, FocusType } from "@/types/focusWizard";
 import type { FocusOutline, PlanDay } from "@/types/learningFocus";
 import { focusApi } from "@/lib/focusApi";
 import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
+import { generateSyllabus, mapSyllabusToDays, type DayForBackend } from "@/lib/syllabusGenerator";
+import type { WeekPlan } from "@/types/syllabus";
 
 // ============================================================================
 // Helpers
@@ -247,18 +249,37 @@ export default function FocusPage() {
       minutesPerDay = data.step3.minutesPerDay || 100;
     }
 
+    const durationDays = data.step2.durationDays || 7;
+
     try {
-      // ── Direct backend: create-plan (no outline step) ──
+      // ── Syllabus generation for language domain ──
+      let prebuiltDays: DayForBackend[] | undefined;
+      let syllabusData: WeekPlan | undefined;
+
+      if (domain === "language") {
+        try {
+          console.log("[FOCUS] Generating syllabus...");
+          syllabusData = await generateSyllabus(data);
+          prebuiltDays = mapSyllabusToDays(syllabusData, goalTitle, durationDays);
+          console.log("[FOCUS] Syllabus generated:", syllabusData.days.length, "days,", prebuiltDays.reduce((sum, d) => sum + d.items.length, 0), "items");
+        } catch (syllabusErr) {
+          console.warn("[FOCUS] Syllabus generation failed, falling back to defaults:", syllabusErr);
+          // prebuiltDays stays undefined → backend generates defaults
+        }
+      }
+
+      // ── Create plan (with or without syllabus items) ──
       console.log("[FOCUS] Calling backend create-plan...");
       const createResult = await backendApi.createPlan({
         title: goalTitle,
         domain,
         level,
         minutes_per_day: minutesPerDay,
-        duration_days: data.step2.durationDays,
+        duration_days: durationDays,
         tone: data.step4?.tone,
         difficulty: data.step4?.difficulty,
         pacing: data.step4?.pacing,
+        prebuilt_days: prebuiltDays,
       });
 
       if (!createResult.ok) {
@@ -267,20 +288,41 @@ export default function FocusPage() {
 
       console.log("[FOCUS] Plan created:", createResult.plan_id);
 
-      // Save plan_id + build local outline placeholder for UI
+      // Save plan_id
       localStorage.setItem("pumi_focus_plan_id", createResult.plan_id);
 
-      const durationDays = data.step2.durationDays || 7;
-      const localOutline = {
+      // Save syllabus for reference
+      if (syllabusData) {
+        localStorage.setItem("pumi_focus_syllabus", JSON.stringify(syllabusData));
+      }
+
+      // Build outline — enriched with syllabus data if available
+      const localOutline: FocusOutline = {
         title: goalTitle,
         domain,
         level,
         minutes_per_day: minutesPerDay,
-        days: Array.from({ length: durationDays }, (_, i) => ({
-          day: i + 1,
-          title: `${goalTitle} • Nap ${i + 1}`,
-          intro: "",
-        })),
+        days: syllabusData
+          ? syllabusData.days.map((sd) => ({
+              day: sd.day,
+              title: `Nap ${sd.day}: ${sd.theme_hu}`,
+              intro: sd.grammar_focus
+                ? `${sd.grammar_focus} | ${sd.key_vocab.slice(0, 4).join(", ")}${sd.key_vocab.length > 4 ? "..." : ""}`
+                : "",
+            }))
+          // Pad remaining days if syllabus covers fewer than durationDays
+          .concat(
+            Array.from({ length: Math.max(0, durationDays - syllabusData.days.length) }, (_, i) => ({
+              day: syllabusData!.days.length + i + 1,
+              title: `${goalTitle} • Nap ${syllabusData!.days.length + i + 1}`,
+              intro: "",
+            })),
+          )
+          : Array.from({ length: durationDays }, (_, i) => ({
+              day: i + 1,
+              title: `${goalTitle} • Nap ${i + 1}`,
+              intro: "",
+            })),
       };
 
       setOutline(localOutline);
@@ -463,7 +505,8 @@ export default function FocusPage() {
     localStorage.removeItem(IN_PROGRESS_KEY);
     localStorage.removeItem(COMPLETED_ITEMS_KEY);
     localStorage.removeItem("pumi_focus_plan_id");
-    
+    localStorage.removeItem("pumi_focus_syllabus");
+
     // Clear item caches
     Object.keys(localStorage)
       .filter(k => k.startsWith("pumi_item_"))
