@@ -5,7 +5,7 @@ import type { PlanItem, ItemContent } from "@/types/learningFocus";
 import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
 import { TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
-import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
+import { focusApi } from "@/lib/focusApi";
 
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
@@ -127,10 +127,16 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
         return null;
       };
 
-      // ── Direct backend via FocusApiClient ──
+      // ── Generate item content via focusApi (pumiInvoke) ──
       try {
         console.log(`[API] Fetching content for: ${item.id}`);
-        const resp = await backendApi.generateItemContent(item.id);
+        const resp = await focusApi.generateItemContent({
+          item_id: item.id,
+          topic: item.topic || item.label,
+          label: item.label,
+          day_title: dayTitle,
+          mode: "learning",
+        });
         if (resp.ok && resp.content) {
           const validated = validateAndCache(resp.content);
           if (validated) {
@@ -138,7 +144,7 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
             return validated;
           }
         }
-        throw new Error("Backend returned invalid content");
+        throw new Error(resp.error || "Backend returned invalid content");
       } catch (err) {
         console.error(`[API] Failed for ${item.id}:`, err);
 

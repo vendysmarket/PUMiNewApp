@@ -1,7 +1,7 @@
 // src/features/focus/focusApiClient.ts
 import { supabase } from "@/integrations/supabase/client";
 
-const BASE = import.meta.env.VITE_PUMI_BACKEND_URL; // pl. https://your-railway-app.up.railway.app
+const BASE = import.meta.env.VITE_PUMI_BACKEND_URL; // pl. https://api.emoria.life
 
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
@@ -21,7 +21,10 @@ async function post<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
 
-  if (!res.ok) throw new Error(`Focus API ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Focus API ${path} failed: ${res.status} ${text}`);
+  }
   return res.json();
 }
 
@@ -31,47 +34,70 @@ async function get<T>(path: string): Promise<T> {
   };
 
   const res = await fetch(`${BASE}${path}`, { headers });
-  if (!res.ok) throw new Error(`Focus API ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Focus API ${path} failed: ${res.status} ${text}`);
+  }
   return res.json();
 }
 
-export const focusApi = {
-  outline: (
-    goal: string,
-    opts?: {
-      domain?: string;
-      level?: string;
-      minutes_per_day?: number;
-      duration_days?: number;
-    },
-  ) =>
-    post<{ ok: boolean; outline: any }>("/focus/outline", {
-      goal,
-      mode: "learning",
-      domain: opts?.domain ?? "learning",
-      level: opts?.level ?? "beginner",
-      minutes_per_day: opts?.minutes_per_day ?? 20,
-      duration_days: opts?.duration_days ?? 7,
-      lang: "hu",
-    }),
+type FocusMode = "learning" | "project";
 
-  createPlan: (plan: {
-    title: string;
-    domain: string;
-    level: string;
-    mode: "learning" | "project";
-    minutes_per_day?: number;
-    days: any[];
-  }) => post<{ ok: boolean; plan_id: string }>("/focus/create-plan", plan),
+export type CreatePlanInput = {
+  title: string;
+  domain: string;
+  level?: string;
+  lang?: "hu";
+  mode?: FocusMode;
+  minutes_per_day?: number;
+  tone?: string;
+  difficulty?: string;
+  pacing?: string;
+  force_new?: boolean;
+  duration_days?: number;
+};
+
+function buildDays(durationDays: number, title: string) {
+  const n = Math.max(1, Math.min(14, durationDays || 7));
+  return Array.from({ length: n }, (_, i) => ({
+    dayIndex: i,
+    title: `${title} • Nap ${i + 1}`,
+    intro: "",
+    items: [],
+  }));
+}
+
+export const focusApi = {
+  createPlan: (input: CreatePlanInput) => {
+    const mode: FocusMode =
+      input.mode ?? (input.domain === "project" ? "project" : "learning");
+
+    return post<{ ok: boolean; plan_id: string }>("/focus/create-plan", {
+      title: input.title,
+      domain: input.domain,
+      level: input.level ?? "beginner",
+      lang: "hu",
+      mode,
+      minutes_per_day: input.minutes_per_day ?? 100,
+      tone: input.tone ?? "",
+      difficulty: input.difficulty ?? "",
+      pacing: input.pacing ?? "",
+      force_new: input.force_new ?? false,
+      days: buildDays(input.duration_days ?? 7, input.title),
+    });
+  },
 
   active: () => get<{ ok: boolean; plan?: any; day?: any }>("/focus/active"),
 
   startDay: (plan_id: string) =>
-    post<{ ok: boolean; plan_id: string; day: any; status: string }>("/focus/start-day", { plan_id }),
+    post<{ ok: boolean; plan_id: string; day: any; status: string }>(
+      "/focus/start-day",
+      { plan_id },
+    ),
 
   getDay: (plan_id: string, day_index: number) =>
-    post<{ ok: boolean; day: any; items: any[] }>("/focus/get-day", { plan_id, day_index }),
-
-  generateItemContent: (item_id: string) =>
-    post<{ ok: boolean; item_id: string; content: any }>("/focus/generate-item-content", { item_id }),
+    post<{ ok: boolean; day: any; items?: any[]; status?: string }>(
+      "/focus/get-day",
+      { plan_id, day_index },
+    ),
 };

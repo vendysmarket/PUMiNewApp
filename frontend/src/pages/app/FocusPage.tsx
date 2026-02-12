@@ -221,10 +221,10 @@ export default function FocusPage() {
   // ============================================================================
   
   const handleWizardComplete = async (data: WizardData) => {
-    // ✅ Check if plan already exists - don't regenerate
+    // Check if plan already exists - don't regenerate
     const existingPlanId = localStorage.getItem("pumi_focus_plan_id");
     if (existingPlanId && planMeta && outline) {
-      console.log("[FOCUS] Plan already exists, skipping generation:", existingPlanId);
+      console.log("[FOCUS] Plan already exists, skipping:", existingPlanId);
       setView("outline");
       return;
     }
@@ -233,27 +233,62 @@ export default function FocusPage() {
     setError(null);
 
     // Extract wizard data
-    const message = `${data.step2.goalSentence}`;
-    const domain = data.step1.focusType === "language" ? "language" : "other";
+    const goalTitle = data.step2.goalSentence;
+    const domain = data.step1.focusType === "language" ? "language"
+      : data.step1.focusType === "project" ? "project"
+      : "other";
     let level = "beginner";
-    let minutesPerDay = 20;
+    let minutesPerDay = 100; // 4×25 min default
 
     if (data.step3 && "level" in data.step3) {
       level = data.step3.level;
-      minutesPerDay = data.step3.minutesPerDay;
+      minutesPerDay = data.step3.minutesPerDay || 100;
     } else if (data.step3 && "minutesPerDay" in data.step3) {
-      minutesPerDay = data.step3.minutesPerDay;
+      minutesPerDay = data.step3.minutesPerDay || 100;
     }
 
-    // Helper: finish wizard with parsed outline + plan_id
-    const finishWithPlan = (parsedOutline: any, planId: string) => {
-      localStorage.setItem("pumi_focus_plan_id", planId);
-      setOutline(parsedOutline);
+    try {
+      // ── Direct backend: create-plan (no outline step) ──
+      console.log("[FOCUS] Calling backend create-plan...");
+      const createResult = await backendApi.createPlan({
+        title: goalTitle,
+        domain,
+        level,
+        minutes_per_day: minutesPerDay,
+        duration_days: data.step2.durationDays,
+        tone: data.step4?.tone,
+        difficulty: data.step4?.difficulty,
+        pacing: data.step4?.pacing,
+      });
+
+      if (!createResult.ok) {
+        throw new Error("Backend create-plan failed");
+      }
+
+      console.log("[FOCUS] Plan created:", createResult.plan_id);
+
+      // Save plan_id + build local outline placeholder for UI
+      localStorage.setItem("pumi_focus_plan_id", createResult.plan_id);
+
+      const durationDays = data.step2.durationDays || 7;
+      const localOutline = {
+        title: goalTitle,
+        domain,
+        level,
+        minutes_per_day: minutesPerDay,
+        days: Array.from({ length: durationDays }, (_, i) => ({
+          day: i + 1,
+          title: `${goalTitle} • Nap ${i + 1}`,
+          intro: "",
+        })),
+      };
+
+      setOutline(localOutline);
       setPlanMeta({
-        id: planId,
+        id: createResult.plan_id,
         focusType: data.step1.focusType || "custom",
-        goal: data.step2.goalSentence,
-        durationDays: data.step2.durationDays,
+        goal: goalTitle,
+        durationDays,
         minutesPerDay,
         startedAt: new Date().toISOString(),
         currentDayIndex: 1,
@@ -262,42 +297,6 @@ export default function FocusPage() {
         archived: false,
       });
       setView("outline");
-    };
-
-    try {
-      // ── Direct backend via FocusApiClient ──
-      console.log("[FOCUS] Calling backend outline...");
-      const outlineResp = await backendApi.outline(message, {
-        domain,
-        level,
-        minutes_per_day: minutesPerDay,
-        duration_days: data.step2.durationDays,
-      });
-
-      const outlineData = outlineResp.outline;
-      const days = outlineData?.days ?? outlineData ?? [];
-
-      if (!Array.isArray(days) || days.length === 0) {
-        throw new Error("Backend returned empty outline");
-      }
-
-      console.log("[FOCUS] Outline OK:", outlineData);
-
-      const createResult = await backendApi.createPlan({
-        title: outlineData?.title || message,
-        domain: outlineData?.domain || domain,
-        level: outlineData?.level || level,
-        mode: "learning",
-        minutes_per_day: outlineData?.minutes_per_day || minutesPerDay,
-        days,
-      });
-
-      if (!createResult.ok) {
-        throw new Error("Backend create-plan failed");
-      }
-
-      console.log("[FOCUS] Plan created:", createResult.plan_id);
-      finishWithPlan(outlineData, createResult.plan_id);
     } catch (err) {
       console.error("[FOCUS] Wizard complete error:", err);
       setError(parseNetworkError(err));
