@@ -12,12 +12,16 @@ BUILD = os.getenv("BUILD_TAG", "SUPABASE-AUTH-V2-FIX-PRACTICE-KIND")
 
 app = FastAPI(title="pumi-backend", version=BUILD)
 
-# Production origins only - no Lovable remnants
-ALLOWED_ORIGINS = [
+# CORS origins: env-based + hardcoded defaults
+_env_origins = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _env_origins.split(",") if o.strip()] or [
     "https://emoria.life",
     "https://www.emoria.life",
-    "http://localhost:5173",  # Local Vite dev
-    "http://localhost:3000",  # Local dev
+    "https://pu-mi-new-app.vercel.app",
+    "https://pu-mi-new-app-git-main-pum-i-team.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://localhost:3000",
 ]
 
 app.add_middleware(

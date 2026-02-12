@@ -5,7 +5,6 @@ import type { PlanItem, ItemContent } from "@/types/learningFocus";
 import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
 import { TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
-import { pumiInvoke } from "@/lib/pumiInvoke";
 import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
 
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
@@ -128,80 +127,35 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
         return null;
       };
 
-      // ── PRIMARY: Direct backend via FocusApiClient ──
+      // ── Direct backend via FocusApiClient ──
       try {
-        console.log(`[API DIRECT] Fetching content for: ${item.id}`);
-        const directResp = await backendApi.generateItemContent(item.id);
-        if (directResp.ok && directResp.content) {
-          const validated = validateAndCache(directResp.content);
+        console.log(`[API] Fetching content for: ${item.id}`);
+        const resp = await backendApi.generateItemContent(item.id);
+        if (resp.ok && resp.content) {
+          const validated = validateAndCache(resp.content);
           if (validated) {
-            console.log(`[API DIRECT] Content loaded for: ${item.id}`);
+            console.log(`[API] Content loaded for: ${item.id}`);
             return validated;
           }
         }
-        throw new Error("Direct backend returned invalid content");
-      } catch (directErr) {
-        console.warn(`[API DIRECT] Failed for ${item.id}, falling back:`, directErr);
+        throw new Error("Backend returned invalid content");
+      } catch (err) {
+        console.error(`[API] Failed for ${item.id}:`, err);
+
+        // Use fallback template so the UI doesn't break
+        console.log(`[FALLBACK] Using template for ${item.id}`);
+        const fallback = getFallbackTemplate(
+          detectKindFromItem(item),
+          item.topic || item.label
+        );
+
+        const cacheEntry: CacheEntry = {
+          content: fallback,
+          timestamp: Date.now(),
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
+        return fallback;
       }
-
-      // ── FALLBACK: pumiInvoke proxy (original flow) ──
-      let attempts = 0;
-      const maxAttempts = 2;
-
-      while (attempts < maxAttempts) {
-        attempts++;
-        try {
-          console.log(`[API PROXY] Fetching content for: ${item.id} (attempt ${attempts})`);
-
-          const data = await pumiInvoke<{ ok: boolean; content?: any; error?: string }>(
-            "/chat/focus-item-content",
-            {
-              item_type: item.type,
-              item_id: item.id,
-              topic: item.topic || item.label,
-              context: { day_title: dayTitle, day_intro: dayIntro },
-              domain: domain || "language",
-              level: level || "beginner",
-              lang: lang || "hu",
-              practice_type: item.practice_type,
-              num_questions: item.type === "quiz" ? 5 : undefined,
-              num_cards: item.type === "flashcard" ? 8 : undefined,
-              schema_version: "1.0",
-              require_strict: true,
-            }
-          );
-
-          if (data.ok && data.content) {
-            const validated = validateAndCache(data.content);
-            if (validated) return validated;
-          }
-
-          throw new Error(data.error || "Failed to load content");
-        } catch (err) {
-          console.error(`[ERROR] Attempt ${attempts} failed for ${item.id}:`, err);
-
-          if (attempts < maxAttempts) {
-            console.log(`[RETRY] Retrying ${item.id}...`);
-            continue;
-          }
-
-          // After all retries, use fallback template
-          console.log(`[FALLBACK] Using fallback template for ${item.id}`);
-          const fallback = getFallbackTemplate(
-            detectKindFromItem(item),
-            item.topic || item.label
-          );
-
-          const cacheEntry: CacheEntry = {
-            content: fallback,
-            timestamp: Date.now(),
-          };
-          localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-          return fallback;
-        }
-      }
-
-      return null;
     })();
 
     pendingRequests[item.id] = fetchPromise;

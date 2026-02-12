@@ -13,7 +13,6 @@ import { ArchiveModal } from "@/components/focus/ArchiveModal";
 import { WizardData, FocusPlanMeta, FocusType } from "@/types/focusWizard";
 import type { FocusOutline, PlanDay } from "@/types/learningFocus";
 import { focusApi } from "@/lib/focusApi";
-import { pumiInvoke } from "@/lib/pumiInvoke";
 import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
 
 // ============================================================================
@@ -266,8 +265,8 @@ export default function FocusPage() {
     };
 
     try {
-      // ── PRIMARY: Direct backend via FocusApiClient ──
-      console.log("[FOCUS] Trying direct backend outline...");
+      // ── Direct backend via FocusApiClient ──
+      console.log("[FOCUS] Calling backend outline...");
       const outlineResp = await backendApi.outline(message, {
         domain,
         level,
@@ -279,10 +278,10 @@ export default function FocusPage() {
       const days = outlineData?.days ?? outlineData ?? [];
 
       if (!Array.isArray(days) || days.length === 0) {
-        throw new Error("Direct backend returned empty outline");
+        throw new Error("Backend returned empty outline");
       }
 
-      console.log("[FOCUS] Direct backend outline OK:", outlineData);
+      console.log("[FOCUS] Outline OK:", outlineData);
 
       const createResult = await backendApi.createPlan({
         title: outlineData?.title || message,
@@ -294,88 +293,14 @@ export default function FocusPage() {
       });
 
       if (!createResult.ok) {
-        throw new Error("Direct backend create-plan failed");
+        throw new Error("Backend create-plan failed");
       }
 
-      console.log("[FOCUS] Direct backend plan created:", createResult.plan_id);
+      console.log("[FOCUS] Plan created:", createResult.plan_id);
       finishWithPlan(outlineData, createResult.plan_id);
-    } catch (directErr) {
-      // ── FALLBACK: pumiInvoke proxy (original flow) ──
-      console.warn("[FOCUS] Direct backend failed, falling back to proxy:", directErr);
-
-      try {
-        const result = await pumiInvoke<{ ok: boolean; outline?: any; text?: string; error?: string; detail?: string }>("/chat/enhanced", {
-          mode: "focus_outline",
-          message,
-          lang: "hu",
-          domain,
-          level,
-          minutes_per_day: minutesPerDay,
-          duration: data.step2.durationDays,
-          tone: data.step4.tone,
-          difficulty: data.step4.difficulty,
-          pacing: data.step4.pacing,
-          include_exercise: true,
-          include_translation: true,
-          include_writing: true,
-        });
-
-        if (result.ok && (result.outline || result.text)) {
-          let parsedOutline = result.outline;
-
-          if (!parsedOutline && result.text) {
-            try {
-              const textParsed = JSON.parse(result.text);
-              parsedOutline = textParsed.outline || textParsed;
-            } catch (e) {
-              console.error("[FOCUS] Failed to parse text field:", e);
-            }
-          }
-
-          if (typeof parsedOutline === "string") {
-            try {
-              parsedOutline = JSON.parse(parsedOutline);
-              parsedOutline = parsedOutline.outline || parsedOutline;
-            } catch {}
-          }
-
-          if (parsedOutline && parsedOutline.days) {
-            console.log("[FOCUS] Fallback outline parsed:", parsedOutline);
-
-            const transformedDays = parsedOutline.days.map((d: any) => ({
-              dayIndex: d.day,
-              title: d.title,
-              intro: d.intro,
-              items: [],
-            }));
-
-            const createPlanResult = await focusApi.createPlan({
-              title: parsedOutline.title,
-              message: data.step2.goalSentence,
-              days: transformedDays,
-              domain: parsedOutline.domain || domain,
-              level: parsedOutline.level || level,
-              minutes_per_day: parsedOutline.minutes_per_day || minutesPerDay,
-              lang: "hu",
-            });
-
-            if (!createPlanResult.ok) {
-              setError("Terv létrehozása sikertelen a szerverben");
-              return;
-            }
-
-            finishWithPlan(parsedOutline, createPlanResult.plan_id);
-          } else {
-            setError("Érvénytelen outline formátum");
-          }
-        } else {
-          const errorMsg = result.error || result.detail || "Terv generálás sikertelen";
-          setError(parseNetworkError(new Error(errorMsg)));
-        }
-      } catch (fallbackErr) {
-        console.error("[FOCUS] Both backends failed:", fallbackErr);
-        setError(parseNetworkError(fallbackErr));
-      }
+    } catch (err) {
+      console.error("[FOCUS] Wizard complete error:", err);
+      setError(parseNetworkError(err));
     } finally {
       setLoading(false);
     }
@@ -406,80 +331,33 @@ export default function FocusPage() {
     const planId = localStorage.getItem("pumi_focus_plan_id");
 
     try {
-      // ── PRIMARY: Direct backend via FocusApiClient ──
-      if (planId) {
-        console.log("[FOCUS] Trying direct backend start-day...");
-        const started = await backendApi.startDay(planId);
+      if (!planId) throw new Error("No planId found");
 
-        if (started.ok) {
-          const dayIdx = started.day?.day_index ?? dayIndex;
-          const dayData = await backendApi.getDay(planId, dayIdx);
+      // ── Direct backend via FocusApiClient ──
+      console.log("[FOCUS] Calling backend start-day...");
+      const started = await backendApi.startDay(planId);
 
-          if (dayData.ok && dayData.day) {
-            const day = {
-              ...dayData.day,
-              items: dayData.items ?? dayData.day.items ?? [],
-            };
+      if (!started.ok) throw new Error("Backend start-day failed");
 
-            if (day.items && day.items.length > 0) {
-              console.log("[FOCUS] Direct backend day loaded:", day);
-              commitDay(day, dayIndex);
-              return;
-            }
-          }
-        }
-        // If we get here, direct backend didn't return usable data
-        throw new Error("Direct backend start-day returned incomplete data");
+      const dayIdx = started.day?.day_index ?? dayIndex;
+      const dayData = await backendApi.getDay(planId, dayIdx);
+
+      if (!dayData.ok || !dayData.day) throw new Error("Backend get-day failed");
+
+      const day = {
+        ...dayData.day,
+        items: dayData.items ?? dayData.day.items ?? [],
+      };
+
+      if (!day.items || day.items.length === 0) {
+        throw new Error("Backend returned day with no items");
       }
-      throw new Error("No planId for direct backend");
-    } catch (directErr) {
-      // ── FALLBACK: pumiInvoke proxy (original flow) ──
-      console.warn("[FOCUS] Direct backend start-day failed, falling back:", directErr);
 
-      try {
-        const selectedDay = outline.days?.[dayIndex - 1];
-        const dayTitle = selectedDay?.title || `Nap ${dayIndex}`;
-
-        const result = await pumiInvoke<{ ok: boolean; day?: any; text?: string; error?: string }>("/chat/enhanced", {
-          mode: "focus_day",
-          day_index: dayIndex,
-          outline,
-          message: `Generate day ${dayIndex}: ${dayTitle}`,
-          lang: "hu",
-          include_exercise: true,
-          include_translation: true,
-          include_writing: true,
-        });
-
-        if (result.ok) {
-          let day = result.day;
-
-          if (typeof day === "string") {
-            try {
-              day = JSON.parse(day);
-              day = day.day || day;
-            } catch {}
-          }
-
-          if (!day && result.text) {
-            try {
-              day = JSON.parse(result.text);
-              day = day.day || day;
-            } catch {}
-          }
-
-          if (day && day.items) {
-            commitDay(day, dayIndex);
-          } else {
-            setError("Érvénytelen nap formátum");
-          }
-        } else {
-          setError(result.error || "Nap generálás sikertelen");
-        }
-      } catch (fallbackErr) {
-        console.error("[FOCUS] Both backends failed for start-day:", fallbackErr);
-        setError(parseNetworkError(fallbackErr));
-      }
+      console.log("[FOCUS] Day loaded:", day);
+      commitDay(day, dayIndex);
+    } catch (err) {
+      console.error("[FOCUS] Start day error:", err);
+      setError(parseNetworkError(err));
     } finally {
       setLoadingDay(null);
     }
