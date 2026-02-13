@@ -6,6 +6,7 @@ import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
 import { LessonRenderer, TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
 import { focusApi } from "@/lib/focusApi";
+import type { WeekPlan, SyllabusDay } from "@/types/syllabus";
 
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
@@ -27,6 +28,29 @@ interface CacheEntry {
 const getCacheKey = (itemId: string) => `focus_item_v2_${itemId}`;
 
 const pendingRequests: Record<string, Promise<StrictFocusItem | null>> = {};
+
+/** Extract syllabus day context for scope-guarded content generation */
+function getSyllabusDayContext(itemId: string): string | undefined {
+  try {
+    const raw = localStorage.getItem("pumi_focus_syllabus");
+    if (!raw) return undefined;
+    const syllabus: WeekPlan = JSON.parse(raw);
+    // Item keys look like "d1-lesson_1", "d3-main" — extract day number
+    const dayMatch = itemId.match(/^d(\d+)-/);
+    if (!dayMatch) return undefined;
+    const dayNum = parseInt(dayMatch[1], 10);
+    const day = syllabus.days.find((d) => d.day === dayNum);
+    if (!day) return undefined;
+    // Build scope guard string for content generator
+    const parts: string[] = [];
+    parts.push(`Napi téma: ${day.theme_hu}`);
+    if (day.grammar_focus) parts.push(`Nyelvtan: ${day.grammar_focus}`);
+    if (day.key_vocab.length > 0) parts.push(`KIZÁRÓLAG ezeket a szavakat használd: ${day.key_vocab.join(", ")}`);
+    return parts.join(". ");
+  } catch {
+    return undefined;
+  }
+}
 
 export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang, onComplete }: LazyItemRendererProps) {
   const [expanded, setExpanded] = useState(false);
@@ -130,11 +154,13 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
       // ── Generate item content via focusApi (pumiInvoke) ──
       try {
         console.log(`[API] Fetching content for: ${item.id}`);
+        const syllabusContext = getSyllabusDayContext(item.id);
         const resp = await focusApi.generateItemContent({
           item_id: item.id,
           topic: item.topic || item.label,
           label: item.label,
           day_title: dayTitle,
+          user_goal: syllabusContext,
           mode: "learning",
           ...(domain ? { domain } : {}),
           ...(level ? { level } : {}),

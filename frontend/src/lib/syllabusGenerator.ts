@@ -219,14 +219,40 @@ export interface DayForBackend {
 
 export function mapSyllabusToDays(weekPlan: WeekPlan, goalTitle: string, totalDays: number): DayForBackend[] {
   const days: DayForBackend[] = weekPlan.days.map((day) => {
+    // Collect lesson vocab_hints for scope-guarding quizzes
+    const lesson1Vocab = day.blocks.find(b => b.block_id === "lesson_1")?.vocab_hint || [];
+    const lesson2Vocab = day.blocks.find(b => b.block_id === "lesson_2")?.vocab_hint || [];
+    const allDayVocab = day.key_vocab.length > 0 ? day.key_vocab : [...lesson1Vocab, ...lesson2Vocab];
+
     const items = day.blocks.map((block) => {
       const mapping = BLOCK_TYPE_TO_ITEM_TYPE[block.block_type] || { type: "lesson" };
 
-      // Build rich topic that seeds coherent content generation
-      const topicParts = [block.topic_seed || day.theme_hu];
-      if (block.grammar_focus) topicParts.push(`(${block.grammar_focus})`);
-      if (block.vocab_hint?.length) topicParts.push(`Szavak: ${block.vocab_hint.join(", ")}`);
-      const topic = topicParts.join(" - ");
+      let topic: string;
+
+      if (block.block_type === "lightning" || block.block_type === "quiz" || block.block_type === "recap_mix") {
+        // Scope-guarded quiz: explicitly constrain to day vocab
+        const quizVocab = block.block_id === "lightning_1" ? lesson1Vocab
+          : block.block_id === "lightning_2" ? lesson2Vocab
+          : allDayVocab;
+        const vocabList = quizVocab.length > 0 ? quizVocab.join(", ") : allDayVocab.join(", ");
+        topic = `${day.theme_hu} - ${block.topic_seed || "kvíz"}. KIZÁRÓLAG ezekből a szavakból/kifejezésekből kérdezz: ${vocabList}`;
+        if (day.grammar_focus) {
+          topic += `. Nyelvtan: ${day.grammar_focus}`;
+        }
+      } else if (block.block_type === "flashcards") {
+        // Flashcards: use day vocab directly
+        topic = `${day.theme_hu} - Szókártyák. Szavak: ${allDayVocab.join(", ")}`;
+      } else if (block.block_type === "translation") {
+        // Translation: constrain to day vocab
+        topic = `${day.theme_hu} - Fordítás. KIZÁRÓLAG ezeket a szavakat/kifejezéseket használd: ${allDayVocab.join(", ")}`;
+        if (day.grammar_focus) topic += `. Nyelvtan: ${day.grammar_focus}`;
+      } else {
+        // Lessons, roleplay, writing: rich topic with grammar + vocab
+        const topicParts = [block.topic_seed || day.theme_hu];
+        if (block.grammar_focus) topicParts.push(`(${block.grammar_focus})`);
+        if (block.vocab_hint?.length) topicParts.push(`Szavak: ${block.vocab_hint.join(", ")}`);
+        topic = topicParts.join(" - ");
+      }
 
       return {
         itemKey: `d${day.day}-${block.block_id}`,
