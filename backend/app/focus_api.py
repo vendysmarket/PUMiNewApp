@@ -169,6 +169,90 @@ def _build_content_body_md(content_data: Dict[str, Any]) -> str:
             parts.append(f"### Gyakori hibák\n{bullets}")
 
     return "\n\n".join(parts).strip()
+
+
+def _extract_lesson_context(content: Dict[str, Any]) -> str:
+    """
+    Extract a compact, structured context from a language lesson content dict.
+    Accepts either a full focus item or the inner lesson content object.
+    """
+    if not isinstance(content, dict):
+        return ""
+
+    src = content
+    # If this looks like a full item, unwrap content
+    if isinstance(content.get("content"), dict) and (content.get("kind") or content.get("schema_version")):
+        src = content.get("content") or {}
+    # If wrapped as data
+    if isinstance(src.get("data"), dict):
+        src = src.get("data") or {}
+
+    parts: List[str] = []
+
+    # Vocabulary
+    vocab = src.get("vocabulary_table") or []
+    if isinstance(vocab, list) and vocab:
+        items = []
+        for v in vocab[:15]:
+            if not isinstance(v, dict):
+                continue
+            word = str(v.get("word") or "").strip()
+            translation = str(v.get("translation") or "").strip()
+            if word and translation:
+                items.append(f"{word} = {translation}")
+        if items:
+            parts.append("VOCABULARY:\n- " + "\n- ".join(items))
+
+    # Grammar
+    grammar = src.get("grammar_explanation") or {}
+    if isinstance(grammar, dict) and grammar:
+        rule_title = str(grammar.get("rule_title") or "").strip()
+        formation = str(grammar.get("formation_pattern") or "").strip()
+        examples = []
+        for ex in (grammar.get("examples") or [])[:3]:
+            if not isinstance(ex, dict):
+                continue
+            tgt = str(ex.get("target") or "").strip()
+            hu = str(ex.get("hungarian") or "").strip()
+            if tgt and hu:
+                examples.append(f"{tgt} — {hu}")
+        lines = []
+        if rule_title:
+            lines.append(f"Rule: {rule_title}")
+        if formation:
+            lines.append(f"Pattern: {formation}")
+        if examples:
+            lines.append("Examples: " + "; ".join(examples))
+        if lines:
+            parts.append("GRAMMAR:\n" + "\n".join(lines))
+
+    # Dialogue snippets (1-2 lines)
+    dialogues = src.get("dialogues") or []
+    if isinstance(dialogues, list) and dialogues:
+        snippets = []
+        for d in dialogues:
+            if not isinstance(d, dict):
+                continue
+            for line in (d.get("lines") or [])[:2]:
+                if not isinstance(line, dict):
+                    continue
+                text = str(line.get("text") or "").strip()
+                tr = str(line.get("translation") or "").strip()
+                if text and tr:
+                    snippets.append(f"{text} — {tr}")
+            if snippets:
+                break
+        if snippets:
+            parts.append("DIALOGUE:\n- " + "\n- ".join(snippets))
+
+    # Common mistakes
+    mistakes = src.get("common_mistakes") or []
+    if isinstance(mistakes, list) and mistakes:
+        mitems = [str(m).strip() for m in mistakes[:5] if str(m).strip()]
+        if mitems:
+            parts.append("COMMON MISTAKES:\n- " + "\n- ".join(mitems))
+
+    return "\n\n".join(parts).strip()
 def today_local_iso() -> str:
 
     """Get today's date in Budapest timezone as ISO string (YYYY-MM-DD)."""
@@ -2948,9 +3032,9 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
                     print(f"[generate-item-content] DB CACHE HIT for item {item.get('id')}")
                     return {"ok": True, "item_id": req.item_id, "content": existing_content, "cached": True}
             elif is_language_domain and stored_kind in ("quiz", "translation", "roleplay", "writing", "cards"):
-                # For practice items, require chained content marker
-                if existing_content.get("chain_version") != "lesson_v1":
-                    print(f"[generate-item-content] Cache bypass (needs chained practice) for item {item.get('id')}")
+                # For practice items, require chained content marker (v2)
+                if existing_content.get("chain_version") != "lesson_v2":
+                    print(f"[generate-item-content] Cache bypass (needs chained practice v2) for item {item.get('id')}")
                 else:
                     print(f"[generate-item-content] DB CACHE HIT for item {item.get('id')}")
                     return {"ok": True, "item_id": req.item_id, "content": existing_content, "cached": True}
@@ -3033,24 +3117,64 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
     # CONTENT CHAINING: For practice/quiz, find preceding lesson's content
     preceding_lesson_content = None
     stored_kind = item.get("kind", "")
-    if is_language_domain and (stored_kind in ("quiz", "translation", "roleplay", "writing", "cards") or item_type in ("quiz", "translation", "roleplay", "writing", "cards")):
+    practice_kinds = ("quiz", "translation", "roleplay", "writing", "cards")
+    if is_language_domain and (stored_kind in practice_kinds or item_type in practice_kinds):
         try:
             day_items_res = _safe_execute(
                 sb.table("focus_items")
-                .select("id, kind, type, order_index, content, item_key")
+                .select("id, kind, type, practice_type, order_index, content, item_key, topic, label, estimated_minutes")
                 .eq("day_id", day_id)
                 .order("order_index")
             )
             if day_items_res and day_items_res.data:
                 current_order = item.get("order_index", 999)
                 for di in reversed(day_items_res.data):
-                    if (di.get("order_index", 999) < current_order
-                            and di.get("kind") == "content"
-                            and di.get("content")
-                            and isinstance(di["content"], dict)):
-                        preceding_lesson_content = json.dumps(di["content"], ensure_ascii=False)[:3000]
-                        print(f"[generate-item-content] Content chain: quiz will use lesson {di.get('item_key')}")
-                        break
+                    if di.get("order_index", 999) >= current_order:
+                        continue
+                    if di.get("kind") != "content":
+                        continue
+
+                    lesson_content = di.get("content") if isinstance(di.get("content"), dict) else None
+                    content_type = None
+                    if isinstance(lesson_content, dict):
+                        if isinstance(lesson_content.get("content"), dict):
+                            content_type = lesson_content["content"].get("content_type")
+                        if not content_type:
+                            content_type = lesson_content.get("content_type")
+
+                    # Auto-generate lesson if missing or not language_lesson
+                    if not lesson_content or content_type != "language_lesson":
+                        try:
+                            lesson_content = await generate_focus_item(
+                                item_type=di.get("type") or "lesson",
+                                practice_type=di.get("practice_type"),
+                                topic=di.get("topic") or day_title,
+                                label=di.get("label") or "Tananyag",
+                                day_title=day_title,
+                                domain=domain,
+                                level=level,
+                                lang=lang,
+                                minutes=di.get("estimated_minutes") or minutes,
+                                user_goal=user_goal,
+                                settings=plan_settings,
+                                preceding_lesson_content=None,
+                            )
+                            try:
+                                _safe_execute(
+                                    sb.table("focus_items").update({"content": lesson_content}).eq("id", di["id"])
+                                )
+                            except Exception as save_err:
+                                print(f"[generate-item-content] WARNING: Failed to save auto lesson: {save_err}")
+                            print(f"[generate-item-content] Auto-generated preceding lesson for chaining {di.get('item_key')}")
+                        except Exception as gen_err:
+                            print(f"[generate-item-content] Auto-lesson generation failed (non-fatal): {gen_err}")
+
+                    if isinstance(lesson_content, dict):
+                        extracted = _extract_lesson_context(lesson_content)
+                        if extracted:
+                            preceding_lesson_content = extracted
+                            print(f"[generate-item-content] Content chain: quiz will use lesson {di.get('item_key')}")
+                            break
         except Exception as chain_err:
             print(f"[generate-item-content] Content chaining failed (non-fatal): {chain_err}")
 

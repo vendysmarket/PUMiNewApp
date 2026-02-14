@@ -13,7 +13,6 @@ import { ArchiveModal } from "@/components/focus/ArchiveModal";
 import { WizardData, FocusPlanMeta, FocusType } from "@/types/focusWizard";
 import type { FocusOutline, PlanDay } from "@/types/learningFocus";
 import { focusApi } from "@/lib/focusApi";
-import { focusApi as backendApi } from "@/features/focus/FocusApiClient";
 import { generateSyllabus, mapSyllabusToDays, type DayForBackend } from "@/lib/syllabusGenerator";
 import type { WeekPlan } from "@/types/syllabus";
 
@@ -270,16 +269,26 @@ export default function FocusPage() {
 
       // ── Create plan (with or without syllabus items) ──
       console.log("[FOCUS] Calling backend create-plan...");
-      const createResult = await backendApi.createPlan({
+      const mode = domain === "project" ? "project" : "learning";
+      const dayCount = Math.max(1, Math.min(14, durationDays || 7));
+      const days = prebuiltDays || Array.from({ length: dayCount }, (_, i) => ({
+        dayIndex: i,
+        title: `${goalTitle} • Nap ${i + 1}`,
+        intro: "",
+        items: [],
+      }));
+      const createResult = await focusApi.createPlan({
         title: goalTitle,
+        message: goalTitle,
         domain,
         level,
         minutes_per_day: minutesPerDay,
-        duration_days: durationDays,
         tone: data.step4?.tone,
         difficulty: data.step4?.difficulty,
         pacing: data.step4?.pacing,
-        prebuilt_days: prebuiltDays,
+        force_new: false,
+        mode,
+        days,
       });
 
       if (!createResult.ok) {
@@ -374,14 +383,15 @@ export default function FocusPage() {
     try {
       if (!planId) throw new Error("No planId found");
 
-      // ── Direct backend via FocusApiClient ──
+      // ── Via pumi-proxy (focusApi) ──
       console.log("[FOCUS] Calling backend start-day...");
-      const started = await backendApi.startDay(planId);
+      const mode = outline?.domain === "project" || outline?.focus_type === "project" ? "project" : "learning";
+      const started = await focusApi.startDay({ plan_id: planId, mode });
 
       if (!started.ok) throw new Error("Backend start-day failed");
 
       const dayIdx = started.day?.day_index ?? dayIndex;
-      const dayData = await backendApi.getDay(planId, dayIdx);
+      const dayData = await focusApi.getDay({ plan_id: planId, day_index: dayIdx, mode });
 
       if (!dayData.ok || !dayData.day) throw new Error("Backend get-day failed");
 

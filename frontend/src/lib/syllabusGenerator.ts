@@ -179,7 +179,7 @@ export async function generateSyllabus(wizardData: WizardData): Promise<WeekPlan
     pumiInvoke<{ reply?: string; text?: string; message?: string }>("/chat/enhanced", {
       message: prompt,
       lang: "hu",
-      mode: "chat",
+      mode: "learning",
     }),
     20000,
   );

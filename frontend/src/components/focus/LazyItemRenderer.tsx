@@ -25,7 +25,7 @@ interface CacheEntry {
   timestamp: number;
 }
 
-const getCacheKey = (itemId: string) => `focus_item_v2_${itemId}`;
+const getCacheKey = (itemId: string) => `focus_item_v3_${itemId}`;
 
 const pendingRequests: Record<string, Promise<StrictFocusItem | null>> = {};
 

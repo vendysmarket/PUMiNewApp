@@ -1220,6 +1220,7 @@ KIND: {kind} (DO NOT CHANGE)
 IMPORTANT - CONTENT CHAINING:
 The user just completed a lesson. You MUST build this item using ONLY the vocabulary,
 grammar rules, and examples from THAT lesson. Do NOT introduce new material.
+ONLY use the vocabulary list below (VOCABULARY section) when creating questions/tasks.
 
 --- PRECEDING LESSON CONTENT ---
 {preceding_lesson_content[:3000]}
@@ -1232,6 +1233,7 @@ Generate quiz questions that directly test:
 2. Grammar rules from grammar_explanation (correct forms, patterns)
 3. Dialogue comprehension (what was said, appropriate responses)
 4. Common mistakes awareness (identify the error)
+Include at least: 2 vocab questions, 1 grammar question, 1 dialogue question, 1 mistake question (if available).
 """
         elif kind == "translation":
             user += """
@@ -1418,7 +1420,7 @@ async def generate_focus_item(
         data["validation"]["require_interaction"] = True
         if preceding_lesson_content:
             # Mark chained practice items so cache can distinguish legacy content
-            data["chain_version"] = "lesson_v1"
+            data["chain_version"] = "lesson_v2"
 
     # Validate
     is_valid, error = _validate_focus_item(data)
