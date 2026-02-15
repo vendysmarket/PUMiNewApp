@@ -1043,88 +1043,104 @@ QUALITY RULES:
         "content": content_spec_content,
         "translation": '''
 "content": {
-  "source_lang": "hu",
-  "target_lang": "en",
-  "items": [
-    { "prompt": "Fordítsd le: „..."", "answer_key": null }
-  ],
-  "hints": ["hint1", "hint2"]
-}''',
+  "sentences": [
+    { "source": "Sentence to translate", "target_lang": "''' + lang + '''", "hint": "optional hint" },
+    { "source": "Second sentence", "target_lang": "''' + lang + '''", "hint": "optional hint" }
+  ]
+}
+RULES:
+- sentences: 4-6 items
+- source: Hungarian sentence to translate
+- target_lang: the language being learned
+- Keep sentences aligned to the lesson topic
+''',
         "quiz": '''
 "content": {
   "title": "Specific quiz title",
   "questions": [
     {
-      "q": "Question 1 text - tests understanding",
+      "question": "Question 1 text - tests understanding",
       "options": ["Option 1", "Option 2", "Option 3"],
-      "answer_index": 0,
+      "correct_index": 0,
       "explanation": "Why this is correct (1-2 sentences)"
     },
     {
-      "q": "Question 2 text - application scenario",
+      "question": "Question 2 text - application scenario",
       "options": ["Option 1", "Option 2", "Option 3"],
-      "answer_index": 1,
+      "correct_index": 1,
       "explanation": "Why this is correct"
     },
     {
-      "q": "Question 3 text - compare/contrast",
+      "question": "Question 3 text - compare/contrast",
       "options": ["Option 1", "Option 2", "Option 3"],
-      "answer_index": 2,
+      "correct_index": 2,
       "explanation": "Why this is correct"
     },
     {
-      "q": "Question 4 text - identify error",
+      "question": "Question 4 text - identify error",
       "options": ["Option 1", "Option 2", "Option 3"],
-      "answer_index": 0,
+      "correct_index": 0,
       "explanation": "Why this is correct"
     }
-  ],
-  "estimated_minutes": 5
+  ]
 }
 QUALITY RULES:
 - MUST have 4-6 questions
 - Each question MUST have exactly 3 options
+- Use "question" (not "q"), "correct_index" (not "answer_index")
 - Options must be plausible, not placeholders, not repeated
 - Each question MUST include explanation
 ''',
         "cards": '''
 "content": {
   "cards": [
-    { "front": "word", "back": "translation", "example": "Example sentence" },
-    ... at least 5-8 cards
-  ],
-  "mode": "study_then_selftest"
-}''',
+    { "front": "word in target language", "back": "Hungarian translation" }
+  ]
+}
+RULES:
+- 5-8 cards minimum
+- front: target language word/phrase
+- back: Hungarian translation
+''',
         "roleplay": '''
 "content": {
-  "scene_title": "Scene description",
-  "roles": { "user": "customer", "assistant": "waiter" },
-  "setting": { "place": "restaurant", "tone": "friendly", "goal": "order food" },
-  "opening_line": "The first line the AI says to start the dialogue",
-  "must_use_phrases": ["phrase1", "phrase2", "phrase3"],
-  "success_criteria": ["criterion1", "criterion2"],
-  "turn_limit": 8
-}''',
+  "scenario": "Description of the roleplay situation (in Hungarian)",
+  "roles": { "user": "user role name", "ai": "AI partner role name" },
+  "starter_prompt": "The first line the AI says to start the dialogue",
+  "sample_exchanges": [
+    { "user": "Example user message", "ai": "Example AI response" }
+  ]
+}
+RULES:
+- scenario: clear description in Hungarian
+- Use "ai" (not "assistant") for the AI role
+- starter_prompt: natural opening line
+- sample_exchanges: 2-3 example exchanges
+''',
         "writing": '''
 "content": {
-  "prompt": "Writing task description",
-  "constraints": ["constraint1", "constraint2"],
-  "example_starter": "Example opening..."
-}''',
+  "prompt": "Clear writing task description in Hungarian",
+  "example": "Example of what good output looks like",
+  "word_count_target": 50
+}
+RULES:
+- prompt: specific, actionable writing task
+- example: short example to guide the learner
+''',
         "checklist": '''
 "content": {
-  "title": "Checklist title",
-  "items": [
-    { "text": "Concrete step 1", "done": false },
-    { "text": "Concrete step 2", "done": false },
-    { "text": "Concrete step 3", "done": false },
-    { "text": "Concrete step 4", "done": false },
-    { "text": "Concrete step 5", "done": false }
+  "steps": [
+    { "instruction": "Concrete step 1" },
+    { "instruction": "Concrete step 2" },
+    { "instruction": "Concrete step 3" },
+    { "instruction": "Concrete step 4" },
+    { "instruction": "Concrete step 5" }
   ],
-  "estimated_minutes": 5
+  "proof_prompt": "Describe how you completed the task"
 }
 QUALITY RULES:
-- MUST have 5-9 concrete items
+- steps: 5-9 concrete items
+- Use "steps" (not "items"), "instruction" (not "text")
 ''',
         "upload_review": '''
 "content": {

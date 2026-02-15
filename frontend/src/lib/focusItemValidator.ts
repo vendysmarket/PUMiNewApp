@@ -131,16 +131,23 @@ function extractContent(raw: any, kind: FocusItemKind): FocusItemContent {
         },
       };
     
-    case "roleplay":
+    case "roleplay": {
+      // Normalize roles: backend may use "assistant" instead of "ai"
+      const rawRoles = content?.roles || {};
+      const roles = {
+        user: rawRoles.user || "Te",
+        ai: rawRoles.ai || rawRoles.assistant || "Partner",
+      };
       return {
         kind: "roleplay",
         data: {
-          scenario: content?.scenario || raw?.text || raw?.instructions_md || "Gyakorold a párbeszédet!",
-          roles: content?.roles || { user: "Te", ai: "Partner" },
-          starter_prompt: content?.starter_prompt,
+          scenario: content?.scenario || content?.scene_title || content?.setting?.goal || raw?.text || raw?.instructions_md || "Gyakorold a párbeszédet!",
+          roles,
+          starter_prompt: content?.starter_prompt || content?.opening_line,
           sample_exchanges: content?.sample_exchanges,
         },
       };
+    }
     
     case "writing":
       return {
@@ -246,16 +253,25 @@ function extractLessonContent(raw: any): LessonContent {
 
 function extractTranslationSentences(raw: any): Array<{ source: string; target_lang: string; hint?: string }> {
   const content = raw?.content;
-  
-  // New format
+
+  // New format: sentences array
   if (content?.sentences && Array.isArray(content.sentences)) {
     return content.sentences.map((s: any) => ({
-      source: s.source || s.text || s,
-      target_lang: s.target_lang || "it",
+      source: s.source || s.text || s.prompt || (typeof s === "string" ? s : ""),
+      target_lang: s.target_lang || content?.target_lang || "it",
       hint: s.hint,
     }));
   }
-  
+
+  // Legacy format: items array (old backend spec)
+  if (content?.items && Array.isArray(content.items)) {
+    return content.items.map((s: any) => ({
+      source: s.prompt || s.source || s.text || (typeof s === "string" ? s : ""),
+      target_lang: s.target_lang || content?.target_lang || "it",
+      hint: s.hint,
+    }));
+  }
+
   // Extract from text (line by line)
   const text = content?.text || raw?.text || "";
   if (text) {
@@ -265,7 +281,7 @@ function extractTranslationSentences(raw: any): Array<{ source: string; target_l
       target_lang: "it",
     }));
   }
-  
+
   // Fallback
   return [{ source: "Szia, hogy vagy?", target_lang: "it" }];
 }
@@ -345,11 +361,12 @@ function extractChecklistSteps(raw: any): Array<{ instruction: string; completed
     });
   };
   
-  // New format
-  if (content?.steps && Array.isArray(content.steps)) {
-    const mapped = content.steps.map((s: any) => ({
-      instruction: typeof s === "string" ? s : s.instruction || s.text,
-      completed: s.completed,
+  // New format: steps array
+  const stepsArray = content?.steps || content?.items;
+  if (stepsArray && Array.isArray(stepsArray)) {
+    const mapped = stepsArray.map((s: any) => ({
+      instruction: typeof s === "string" ? s : s.instruction || s.text || "",
+      completed: s.completed || s.done,
     }));
     const filtered = filterValidSteps(mapped);
     return filtered.length > 0 ? filtered : [{ instruction: "Végezd el a feladatot" }];

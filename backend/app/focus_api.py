@@ -3114,9 +3114,9 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
 
     from .llm_client import generate_focus_item
 
-    # CONTENT CHAINING: For practice/quiz, find preceding lesson's ALREADY CACHED content
-    # NOTE: Do NOT auto-generate preceding lessons here — that doubles LLM time and causes timeouts.
-    # If the user opens the lesson first, it'll be cached; quizzes after will chain from it.
+    # CONTENT CHAINING: For practice/quiz, find preceding lesson content.
+    # If the lesson hasn't been generated yet, auto-generate it with Haiku (~10-15s).
+    # Two sequential Haiku calls (~25-30s total) fit within the 58s proxy timeout.
     preceding_lesson_content = None
     stored_kind = item.get("kind", "")
     practice_kinds = ("quiz", "translation", "roleplay", "writing", "cards")
@@ -3124,7 +3124,7 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
         try:
             day_items_res = _safe_execute(
                 sb.table("focus_items")
-                .select("id, kind, type, order_index, content, item_key")
+                .select("id, kind, type, order_index, content, item_key, topic, label, estimated_minutes")
                 .eq("day_id", day_id)
                 .order("order_index")
             )
@@ -3137,14 +3137,45 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
                         continue
 
                     lesson_content = di.get("content") if isinstance(di.get("content"), dict) else None
+
+                    # If lesson not generated yet, auto-generate it now (Haiku is fast enough)
                     if not lesson_content:
-                        print(f"[generate-item-content] Preceding lesson {di.get('item_key')} has no content yet, skipping chain")
-                        continue
+                        print(f"[generate-item-content] Auto-generating preceding lesson {di.get('item_key')} for chaining")
+                        try:
+                            lesson_topic = di.get("topic") or di.get("label") or topic
+                            lesson_result = await generate_focus_item(
+                                item_type="lesson",
+                                practice_type=None,
+                                topic=lesson_topic,
+                                label=di.get("label") or lesson_topic,
+                                day_title=day_title or "",
+                                domain=domain,
+                                level=level,
+                                lang=lang,
+                                minutes=di.get("estimated_minutes") or 5,
+                                user_goal=user_goal or "",
+                                settings=plan_settings,
+                            )
+                            if lesson_result and isinstance(lesson_result, dict):
+                                # Save to DB so the lesson loads instantly when user opens it
+                                _safe_execute(
+                                    sb.table("focus_items")
+                                    .update({"content": lesson_result})
+                                    .eq("id", di["id"])
+                                )
+                                print(f"[generate-item-content] Auto-generated + saved lesson {di.get('item_key')}")
+                                lesson_content = lesson_result
+                            else:
+                                print(f"[generate-item-content] Auto-generation returned empty for {di.get('item_key')}")
+                                continue
+                        except Exception as gen_err:
+                            print(f"[generate-item-content] Auto-generation failed for {di.get('item_key')}: {gen_err}")
+                            continue
 
                     extracted = _extract_lesson_context(lesson_content)
                     if extracted:
                         preceding_lesson_content = extracted
-                        print(f"[generate-item-content] Content chain: quiz will use lesson {di.get('item_key')}")
+                        print(f"[generate-item-content] Content chain: {stored_kind} will use lesson {di.get('item_key')}")
                         break
         except Exception as chain_err:
             print(f"[generate-item-content] Content chaining failed (non-fatal): {chain_err}")
