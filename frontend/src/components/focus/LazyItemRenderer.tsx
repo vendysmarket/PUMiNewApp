@@ -210,14 +210,10 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
         }
 
         // Last resort: static template so UI stays usable
-        console.log(`[FALLBACK] Using template for ${item.id}`);
+        // Do NOT cache fallback templates — next load should retry the API
+        // (backend may have generated + saved content to DB by then)
+        console.log(`[FALLBACK] Using template for ${item.id} (not cached — will retry)`);
         const fallback = getFallbackTemplate(detectKindFromItem(item), item.topic || item.label);
-
-        const cacheEntry: CacheEntry = {
-          content: fallback,
-          timestamp: Date.now(),
-        };
-        localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
         return fallback;
       }
     })();

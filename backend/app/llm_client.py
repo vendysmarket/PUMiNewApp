@@ -967,7 +967,7 @@ def _build_item_generation_prompt(
     is_language_domain = (domain or "other").lower() in ("language_learning", "language")
 
     # Language domain lessons get a rich, structured content spec
-    # NOTE: Keep spec compact — Sonnet must finish within ~45s for proxy timeout
+    # NOTE: Keep spec compact — Haiku has limited token budget
     if kind == "content" and is_language_domain:
         content_spec_content = '''
 "content": {
@@ -1319,17 +1319,9 @@ async def generate_focus_item(
             return True
         return False
 
-    if kind == "content" and is_language_domain:
-        # Language lessons: use Sonnet for reliable complex JSON (vocab, grammar, dialogues)
-        # Keep max_tokens moderate to finish within proxy timeout (~55s)
-        text = await _claude_json_sonnet(
-            system=system,
-            user=user,
-            max_tokens=2500,
-            temperature=0.3,
-        )
-    elif kind == "content":
-        # Non-language lessons: Haiku with more tokens
+    if kind == "content":
+        # All lessons use Haiku — Sonnet is too slow for synchronous proxy architecture
+        # Language lessons get structured prompt (vocab, grammar, dialogues) within Haiku's capacity
         text = await _claude_json_haiku(
             system=system,
             user=user,
