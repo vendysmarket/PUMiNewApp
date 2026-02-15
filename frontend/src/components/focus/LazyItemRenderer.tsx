@@ -25,7 +25,7 @@ interface CacheEntry {
   timestamp: number;
 }
 
-const getCacheKey = (itemId: string) => `focus_item_v4_${itemId}`;
+const getCacheKey = (itemId: string) => `focus_item_v5_${itemId}`;
 
 const pendingRequests: Record<string, Promise<StrictFocusItem | null>> = {};
 
@@ -99,7 +99,8 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
     }
 
     // If no cache, bootstrap from server-provided item.content from /focus/get-day
-    if (!cached && item.content && typeof item.content === "object") {
+    // Skip empty objects ({}) — they'd be misclassified as "writing" by the validator
+    if (!cached && item.content && typeof item.content === "object" && Object.keys(item.content).length > 0) {
       try {
         const validation = validateFocusItem(item.content);
         const hydrated = validation.valid
@@ -195,7 +196,8 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
         console.error(`[API] Failed for ${item.id}:`, err);
 
         // Prefer already available backend content from /focus/get-day over hard template
-        if (item.content && typeof item.content === "object") {
+        // Skip empty objects ({}) — they'd be misclassified as "writing"
+        if (item.content && typeof item.content === "object" && Object.keys(item.content).length > 0) {
           try {
             const fromDay = validateAndCache(item.content);
             if (fromDay) {
