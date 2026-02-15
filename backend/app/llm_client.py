@@ -36,7 +36,7 @@ CLAUDE_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 # - SONNET: High-quality conversational responses (low token usage ~300 tokens)
 # - HAIKU: Fast JSON generation tasks (high token usage but cheaper)
 CLAUDE_MODEL_SONNET = (os.getenv("CLAUDE_MODEL_SONNET") or "claude-sonnet-4-20250514").strip()
-CLAUDE_MODEL_HAIKU = (os.getenv("CLAUDE_MODEL_HAIKU") or "claude-3-5-haiku-20241022").strip()
+CLAUDE_MODEL_HAIKU = (os.getenv("CLAUDE_MODEL_HAIKU") or "claude-3-haiku-20240307").strip()
 
 # Default model for backwards compatibility
 CLAUDE_MODEL = CLAUDE_MODEL_HAIKU
@@ -1346,8 +1346,8 @@ async def generate_focus_item(
         return False
 
     if kind == "content" and is_language_domain:
-        # Language lessons: use Haiku with generous token budget for complex JSON
-        text = await _claude_json_haiku(
+        # Language lessons: use Sonnet for reliable complex JSON (vocab, grammar, dialogues)
+        text = await _claude_json_sonnet(
             system=system,
             user=user,
             max_tokens=4096,
