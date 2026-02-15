@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ChevronDown, ChevronUp, Loader2, BookOpen, HelpCircle, Dumbbell, Layers, CheckSquare, Check, MessageSquare, PenLine } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, BookOpen, HelpCircle, Dumbbell, Layers, CheckSquare, Check, MessageSquare, PenLine, Target, Briefcase } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { PlanItem, ItemContent } from "@/types/learningFocus";
 import type { StrictFocusItem, FocusItemKind } from "@/types/focusItem";
 import { validateFocusItem, getFallbackTemplate, checkValidationState, type ValidationState } from "@/lib/focusItemValidator";
-import { LessonRenderer, TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer } from "./renderers";
+import { LessonRenderer, TranslationRenderer, QuizRenderer, CardsRenderer, RoleplayRenderer, WritingRenderer, ChecklistRenderer, BriefingRenderer, FeedbackRenderer } from "./renderers";
 import { focusApi } from "@/lib/focusApi";
 import type { WeekPlan, SyllabusDay } from "@/types/syllabus";
 
@@ -86,9 +86,14 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
     };
   }, []);
 
-  // Check cache on mount
+  // Check cache on mount (feedback items are never cached — dynamic content)
   useEffect(() => {
     const cacheKey = getCacheKey(item.id);
+    const itemKind = detectKindFromItem(item);
+    if (itemKind === "feedback") {
+      localStorage.removeItem(cacheKey);
+      return;
+    }
     const cached = localStorage.getItem(cacheKey);
     if (cached) {
       try {
@@ -160,16 +165,22 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
 
     const fetchPromise = (async (): Promise<StrictFocusItem | null> => {
       // Helper: validate + cache a raw content object
+      // Feedback items are never cached (dynamic content based on user's production)
+      const skipCache = detectKindFromItem(item) === "feedback";
       const validateAndCache = (raw: any): StrictFocusItem | null => {
         const validation = validateFocusItem(raw);
         if (validation.valid) {
           const strict = raw as StrictFocusItem;
-          localStorage.setItem(cacheKey, JSON.stringify({ content: strict, timestamp: Date.now() }));
+          if (!skipCache) {
+            localStorage.setItem(cacheKey, JSON.stringify({ content: strict, timestamp: Date.now() }));
+          }
           return strict;
         }
         if (validation.repaired) {
           console.log(`[REPAIR] Item ${item.id} repaired:`, validation.errors);
-          localStorage.setItem(cacheKey, JSON.stringify({ content: validation.repaired, timestamp: Date.now() }));
+          if (!skipCache) {
+            localStorage.setItem(cacheKey, JSON.stringify({ content: validation.repaired, timestamp: Date.now() }));
+          }
           return validation.repaired;
         }
         return null;
@@ -316,6 +327,8 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
       case "roleplay": return <MessageSquare className="w-5 h-5 text-green-500" />;
       case "writing": return <Dumbbell className="w-5 h-5 text-teal-500" />;
       case "checklist": return <CheckSquare className="w-5 h-5 text-amber-500" />;
+      case "briefing": return <Briefcase className="w-5 h-5 text-cyan-500" />;
+      case "feedback": return <Target className="w-5 h-5 text-pink-500" />;
       default: return <BookOpen className="w-5 h-5 text-muted-foreground" />;
     }
   };
@@ -330,6 +343,8 @@ export function LazyItemRenderer({ item, dayTitle, dayIntro, domain, level, lang
       case "roleplay": return "Párbeszéd";
       case "writing": return "Írás";
       case "checklist": return "Feladat";
+      case "briefing": return "Helyzetkep";
+      case "feedback": return "Visszajelzes";
       default: return kind;
     }
   };
@@ -527,6 +542,10 @@ function detectKindFromItem(item: PlanItem): FocusItemKind {
   const rawType = (item.type || "").toLowerCase();
   const rawPracticeType = (item.practice_type || "").toLowerCase();
   
+  // Career track kinds
+  if (rawType === "briefing") return "briefing";
+  if (rawType === "feedback") return "feedback";
+
   // Direct mappings
   if (rawType === "lesson" || rawType === "content" || rawType === "tananyag") return "lesson";
   if (rawType === "translation" || rawPracticeType === "translation") return "translation";
@@ -640,6 +659,28 @@ function StrictContentRenderer({
           <ChecklistRenderer
             content={content.data}
             minChars={item.validation.min_chars || 20}
+            onValidationChange={onValidationChange}
+          />
+        );
+      }
+      break;
+
+    case "briefing":
+      if (content.kind === "briefing") {
+        return (
+          <BriefingRenderer
+            content={content.data}
+            onValidationChange={onValidationChange}
+          />
+        );
+      }
+      break;
+
+    case "feedback":
+      if (content.kind === "feedback") {
+        return (
+          <FeedbackRenderer
+            content={content.data}
             onValidationChange={onValidationChange}
           />
         );

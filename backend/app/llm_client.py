@@ -583,7 +583,7 @@ async def llm_chat(
 # =========================
 # CANONICAL FOCUS ITEM SCHEMA v1.0
 # =========================
-VALID_KINDS = ["content", "quiz", "checklist", "upload_review", "translation", "cards", "roleplay", "writing"]
+VALID_KINDS = ["content", "quiz", "checklist", "upload_review", "translation", "cards", "roleplay", "writing", "briefing", "feedback"]
 
 # Kind selection mapping - backend decides, not LLM
 KIND_FROM_PRACTICE_TYPE = {
@@ -610,6 +610,8 @@ KIND_VALIDATION_RULES = {
     "writing": {"min_chars": 120, "min_items": 1, "input_type": "text"},
     "checklist": {"min_chars": 60, "min_items": 1, "input_type": "text"},
     "upload_review": {"min_chars": 0, "min_items": 1, "input_type": "file"},
+    "briefing": {"min_chars": 0, "min_items": 0, "input_type": "none"},  # Read-only briefing card
+    "feedback": {"min_chars": 0, "min_items": 0, "input_type": "none"},  # Read-only AI feedback
 }
 
 # Generic filler and placeholder guards
@@ -657,6 +659,10 @@ def _determine_item_kind(item_type: str, practice_type: Optional[str] = None) ->
     Deterministically select kind based on item type and practice_type.
     Backend decides, not the LLM.
     """
+    if item_type == "briefing":
+        return "briefing"
+    if item_type == "feedback":
+        return "feedback"
     if item_type == "quiz":
         return "quiz"
     if item_type == "flashcard":
@@ -755,8 +761,8 @@ def _validate_focus_item(item: Dict[str, Any]) -> tuple[bool, str]:
 
     # Check validation block
     validation = item.get("validation", {})
-    # Content kind is read-only, doesn't require interaction
-    if kind != "content" and not validation.get("require_interaction"):
+    # Read-only kinds don't require interaction
+    if kind not in ("content", "briefing", "feedback") and not validation.get("require_interaction"):
         return False, "validation.require_interaction must be true"
 
     # Kind-specific validation
@@ -886,6 +892,25 @@ def _validate_focus_item(item: Dict[str, Any]) -> tuple[bool, str]:
         items = content.get("items", [])
         if len(items) < 1:
             return False, "Translation must have at least 1 item"
+
+    elif kind == "briefing":
+        situation = content.get("situation", "")
+        outcome = content.get("outcome", "")
+        if not situation or len(situation) < 20:
+            return False, "Briefing must have situation (min 20 chars)"
+        if not outcome:
+            return False, "Briefing must have outcome"
+
+    elif kind == "feedback":
+        # Feedback can be a placeholder (no corrections yet) or full content
+        corrections = content.get("corrections", [])
+        improved = content.get("improved_version", "")
+        placeholder = content.get("placeholder", False)
+        if not placeholder:
+            if not corrections or len(corrections) < 1:
+                return False, "Feedback must have at least 1 correction"
+            if not improved:
+                return False, "Feedback must have improved_version"
 
     return True, ""
 
@@ -1166,6 +1191,35 @@ QUALITY RULES:
 QUALITY RULES:
 - rubric MUST have 4-6 criteria
 ''',
+        "briefing": '''
+"content": {
+  "situation": "2-3 sentences describing a concrete workplace scenario (e.g. job interview, client meeting, email follow-up)",
+  "outcome": "1 sentence: what the learner will produce by end of session (e.g. 'You will write a follow-up email')",
+  "key_vocabulary_preview": ["key_term_1", "key_term_2", "key_term_3"]
+}
+RULES:
+- situation: concrete, specific workplace scenario. Min 20 chars. In Hungarian.
+- outcome: measurable, actionable. In Hungarian.
+- key_vocabulary_preview: 3-5 key terms in the TARGET language that will appear in later exercises
+''',
+        "feedback": '''
+"content": {
+  "user_text": "The user's original submitted text (echoed back)",
+  "corrections": [
+    { "original": "incorrect phrase from user", "corrected": "correct version", "explanation": "brief explanation why" }
+  ],
+  "improved_version": "Full improved version of the user's text",
+  "alternative_tone": "Same content rewritten in a different register (formal if original was informal, or vice versa)",
+  "score": 4,
+  "praise": "What the learner did well (1-2 sentences)"
+}
+RULES:
+- corrections: 2-6 specific fixes with explanations
+- improved_version: complete rewrite incorporating all corrections, natural fluent text
+- alternative_tone: optional but preferred, different register from original
+- score: 1-5 integer
+- praise: always include something positive
+''',
     }
 
     # For language domain: use explicit target_language from settings, fallback to detection from user_goal
@@ -1185,7 +1239,7 @@ QUALITY RULES:
 - example_sentence: in {target_lang}, example_translation: in Hungarian
 - dialogues: "text" = {target_lang}, "translation" = Hungarian
 - grammar_explanation: explain in Hungarian, examples in {target_lang}
-- Quiz questions: test {target_lang} knowledge (e.g., "What does X mean?" or "How do you say Y in [{target_lang}]?")
+- Quiz questions: test {target_lang} knowledge (e.g., "What does X mean?" or "How do you say Y in {target_lang}?")
 - Translation exercises: translate FROM Hungarian TO {target_lang}
 """
 
@@ -1259,52 +1313,164 @@ KIND: {kind} (DO NOT CHANGE)
 
     # Content chaining: inject preceding lesson content for quizzes
     if preceding_lesson_content and kind != "content":
+        # Resolve actual target language name for use in chaining prompts
+        _target_lang_raw = (settings or {}).get("target_language", "")
+        _LANG_NAMES_HU = {"english": "angol", "german": "német", "spanish": "spanyol", "italian": "olasz",
+                          "french": "francia", "greek": "görög", "portuguese": "portugál", "korean": "koreai", "japanese": "japán"}
+        _chain_lang = _LANG_NAMES_HU.get((_target_lang_raw or "").lower(), _target_lang_raw) if _target_lang_raw else "a célnyelv"
+
         # Apply content chaining for all practice/quiz items in language domain
         user += f"""
 IMPORTANT - CONTENT CHAINING:
 The user just completed a lesson. You MUST build this item using ONLY the vocabulary,
 grammar rules, and examples from THAT lesson. Do NOT introduce new material.
 ONLY use the vocabulary list below (VOCABULARY section) when creating questions/tasks.
-CRITICAL: The VOCABULARY section contains TARGET LANGUAGE words (left side) = Hungarian translations (right side).
-Quiz/practice must test the TARGET LANGUAGE (left side), not Hungarian.
+CRITICAL: The VOCABULARY section contains {_chain_lang} words (left side) = Hungarian translations (right side).
+Quiz/practice must test the {_chain_lang} words (left side), not Hungarian.
 
 --- PRECEDING LESSON CONTENT ---
 {preceding_lesson_content[:3000]}
 --- END LESSON CONTENT ---
 """
         if kind == "quiz":
-            user += """
-Generate quiz questions that test TARGET LANGUAGE knowledge:
-1. Vocabulary: "How do you say [Hungarian word] in [target language]?" or "What does [target word] mean?"
-2. Grammar: test correct TARGET LANGUAGE forms and patterns
-3. Dialogue: comprehension of TARGET LANGUAGE sentences
-4. Common mistakes: identify errors in TARGET LANGUAGE usage
-Options should include TARGET LANGUAGE words/phrases, not only Hungarian.
+            user += f"""
+Generate quiz questions that test {_chain_lang} knowledge:
+1. Vocabulary: "Hogyan mondod {_chain_lang}ul ezt: '[magyar szó]'?" or "Mit jelent a '[{_chain_lang} szó]'?"
+2. Grammar: test correct {_chain_lang} forms and patterns
+3. Dialogue: comprehension of {_chain_lang} sentences
+4. Common mistakes: identify errors in {_chain_lang} usage
+Options should include {_chain_lang} words/phrases, not only Hungarian.
 Include at least: 2 vocab questions, 1 grammar question, 1 dialogue/mistake question.
 """
         elif kind == "translation":
-            user += """
-Generate translation items: translate FROM Hungarian TO the target language.
+            user += f"""
+Generate translation items: translate FROM Hungarian TO {_chain_lang}.
 "source" = Hungarian sentence, "target_lang" = the target language code.
 ONLY use vocabulary from the lesson. Keep sentences short.
 """
         elif kind == "roleplay":
-            user += """
-Create a dialogue scenario IN THE TARGET LANGUAGE.
-The user practices speaking the TARGET language, not Hungarian.
+            user += f"""
+Create a dialogue scenario IN {_chain_lang}.
+The user practices speaking {_chain_lang}, not Hungarian.
 Reuse lesson vocabulary and grammar structures.
 """
         elif kind == "writing":
-            user += """
-Create a short writing prompt where the user writes IN THE TARGET LANGUAGE.
+            user += f"""
+Create a short writing prompt where the user writes IN {_chain_lang}.
 Require using the lesson's key vocabulary and grammar rule.
 """
         elif kind == "cards":
-            user += """
-Create flashcards from the lesson vocabulary: front = TARGET LANGUAGE word, back = Hungarian translation.
+            user += f"""
+Create flashcards from the lesson vocabulary: front = {_chain_lang} word, back = Hungarian translation.
 """
 
     user += "\nOutput ONLY the JSON object, nothing else.\n"
+
+    # Career track prompt overrides
+    track = (settings or {}).get("track", "")
+    if track == "career_language" and is_language_domain:
+        system, user = _apply_career_prompt_overrides(kind, system, user, settings)
+
+    return system, user
+
+
+def _apply_career_prompt_overrides(
+    kind: str,
+    system: str,
+    user: str,
+    settings: Optional[Dict[str, Any]] = None,
+) -> tuple[str, str]:
+    """
+    Override prompts for career_language track items.
+    Career mode focuses on workplace communication: emails, meetings, interviews, etc.
+    """
+    target_lang = (settings or {}).get("target_language", "English")
+
+    career_context = f"""
+🏢 CAREER LANGUAGE MODE:
+This is a CAREER language learning track. The learner practices workplace communication in {target_lang}.
+Focus on professional scenarios: job interviews, client meetings, email writing, presentations, negotiations.
+All content should feel like real workplace situations, NOT classroom exercises.
+"""
+
+    if kind == "briefing":
+        system += career_context
+        user += f"""
+CAREER BRIEFING: Create a specific workplace scenario briefing.
+- situation: A concrete professional scenario (e.g., "Ma egy fontos ügyféltalálkozóra készülsz...")
+- outcome: What they'll produce (e.g., "A nap végére képes leszel megírni egy follow-up emailt")
+- key_vocabulary_preview: 3-5 key {target_lang} workplace terms relevant to today's scenario
+Keep it motivating and practical. Instructions in Hungarian, vocabulary preview in {target_lang}.
+"""
+
+    elif kind == "cards":
+        # Phrase pack: not traditional flashcards, but a "cheat sheet" of expressions
+        system += career_context
+        user += f"""
+CAREER PHRASE PACK (not flashcards!):
+Generate 8-12 workplace expressions as cards.
+- front: {target_lang} expression/phrase (e.g., "I'd like to follow up on...")
+- back: Hungarian translation + usage note (formal/informal, when to use)
+Include a mix of:
+- Polite openers/closers
+- Key action phrases
+- Do/Don't pairs (common mistakes with correct alternatives)
+Focus on the day's workplace scenario. These are "cheat sheet" entries, not vocabulary drill.
+"""
+
+    elif kind == "quiz":
+        # Micro drill: career-specific quick tasks
+        system += career_context
+        user += f"""
+CAREER MICRO DRILL:
+Generate 6 quick workplace communication tasks as quiz questions.
+Mix these types:
+- Sentence completion (fill in the blank in a {target_lang} email/message)
+- Rewrite formal↔informal (given a sentence, pick the correct register)
+- Tone selection (which response is appropriate for this situation?)
+- Error spotting (which version is professionally correct?)
+All options should be in {target_lang}. Questions/instructions in Hungarian.
+Focus on practical workplace communication, not grammar theory.
+"""
+
+    elif kind == "writing":
+        # Production task: write real workplace text
+        system += career_context
+        user += f"""
+CAREER PRODUCTION TASK:
+Create a specific workplace writing task.
+The user should write ONE of these (pick the most relevant for the day's topic):
+- A 5-sentence professional email
+- A 4-line Slack/Teams message
+- A 30-second pitch/introduction
+- A response to a client complaint
+- A meeting follow-up summary
+
+The prompt should specify:
+- The exact situation and recipient
+- The tone expected (formal/casual professional)
+- Key points to include
+- Approximate length (in sentences, not words)
+
+Instructions in Hungarian, the user writes in {target_lang}.
+word_count_target should be 50-80.
+"""
+
+    elif kind == "feedback":
+        system += career_context
+        user += f"""
+CAREER FEEDBACK:
+Analyze the user's writing submission (provided in PRECEDING CONTENT).
+Generate:
+- corrections: 2-6 specific fixes (original → corrected + why)
+- improved_version: full rewrite that sounds native and professional
+- alternative_tone: same content in a different register (if original is formal → casual professional, or vice versa)
+- score: 1-5 based on clarity, grammar, professionalism
+- praise: what they did well
+
+Be encouraging but specific. Focus on workplace-appropriate language.
+Corrections should prioritize: register/tone errors > grammar > vocabulary > style.
+"""
 
     return system, user
 
@@ -1370,7 +1536,7 @@ async def generate_focus_item(
 
     # Deterministic kind selection (after domain normalization)
     kind = _determine_item_kind(item_type, practice_type)
-    allowed_kinds = {"content", "quiz", "checklist", "upload_review", "cards", "translation", "roleplay", "writing"}
+    allowed_kinds = {"content", "quiz", "checklist", "upload_review", "cards", "translation", "roleplay", "writing", "briefing", "feedback"}
     if kind not in allowed_kinds:
         kind = "content" if item_type_lower == "lesson" else "checklist"
 
@@ -1413,6 +1579,20 @@ async def generate_focus_item(
             system=system,
             user=user,
             max_tokens=3500 if is_language_lesson else 2500,
+            temperature=0.3,
+        )
+    elif kind == "briefing":
+        text = await _claude_json_haiku(
+            system=system,
+            user=user,
+            max_tokens=1500,
+            temperature=0.3,
+        )
+    elif kind == "feedback":
+        text = await _claude_json_haiku(
+            system=system,
+            user=user,
+            max_tokens=2000,
             temperature=0.3,
         )
     else:
@@ -1462,7 +1642,7 @@ async def generate_focus_item(
     # Force correct kind (LLM might have changed it)
     data["kind"] = kind
     data.setdefault("validation", {})
-    if kind == "content":
+    if kind in ("content", "briefing", "feedback"):
         data["validation"]["require_interaction"] = False
         data["input"] = {"type": "none", "placeholder": None}
     else:
@@ -1707,6 +1887,26 @@ def _create_fallback_item(kind: str, topic: str, label: str, lang: str, minutes:
         }
         base["input"]["type"] = "file"
         base["validation"]["min_items"] = 1
+
+    elif kind == "briefing":
+        base["content"] = {
+            "situation": (f"Ma a következő munkahelyi szituációval foglalkozunk: {topic}." if is_hu else f"Today we focus on this workplace scenario: {topic}."),
+            "outcome": ("A nap végére képes leszel alkalmazni a tanultakat egy valós helyzetben." if is_hu else "By the end you will apply what you learned in a real situation."),
+            "key_vocabulary_preview": [],
+        }
+        base["validation"]["require_interaction"] = False
+        base["input"]["type"] = "none"
+
+    elif kind == "feedback":
+        base["content"] = {
+            "placeholder": True,
+            "user_text": "",
+            "corrections": [],
+            "improved_version": "",
+            "message": ("Először fejezd be a szövegalkotás feladatot!" if is_hu else "Complete the writing task first!"),
+        }
+        base["validation"]["require_interaction"] = False
+        base["input"]["type"] = "none"
 
     else:
         base["content"] = {"summary": topic}
@@ -2193,7 +2393,7 @@ JSON structure only:
     return data
 
 
-def _normalize_focus_day_items(data: Dict[str, Any], day_index: int, is_hu: bool, domain: str = "other") -> Dict[str, Any]:
+def _normalize_focus_day_items(data: Dict[str, Any], day_index: int, is_hu: bool, domain: str = "other", settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Normalize and validate focus day items with DOMAIN AWARENESS:
     - Map 'roleplay' → 'exercise' for consistency (ONLY in language domains)
@@ -2203,6 +2403,10 @@ def _normalize_focus_day_items(data: Dict[str, Any], day_index: int, is_hu: bool
     DOMAIN SAFETY: Non-language domains get quiz/writing/checklist instead of
     translation/exercise/roleplay.
     """
+    # Career track has a fixed structure — do not add/remove items
+    if (settings or {}).get("track") == "career_language":
+        return data
+
     items = data.get("items", [])
     domain_lower = (domain or "other").lower()
     is_language_domain = domain_lower in ("language_learning", "language")

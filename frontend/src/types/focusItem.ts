@@ -6,10 +6,10 @@
 export const FOCUS_ITEM_SCHEMA_VERSION = "1.0";
 
 // Canonical item kinds - deterministic mapping from backend modes
-export type FocusItemKind = "lesson" | "translation" | "quiz" | "cards" | "roleplay" | "writing" | "checklist";
+export type FocusItemKind = "lesson" | "translation" | "quiz" | "cards" | "roleplay" | "writing" | "checklist" | "briefing" | "feedback";
 
 // Input types for different kinds
-export type FocusInputType = "text" | "multi_text" | "choice" | "flip" | "chat" | "checkbox";
+export type FocusInputType = "text" | "multi_text" | "choice" | "flip" | "chat" | "checkbox" | "none";
 
 // UI display modes
 export type FocusUIMode = "inline" | "modal" | "fullscreen";
@@ -98,6 +98,29 @@ export interface ChecklistContent {
   proof_prompt?: string;
 }
 
+// Briefing: career track situation overview
+export interface BriefingContent {
+  situation: string;
+  outcome: string;
+  key_vocabulary_preview?: string[];
+}
+
+// Feedback: AI review of user's writing submission
+export interface FeedbackContent {
+  user_text: string;
+  corrections: Array<{
+    original: string;
+    corrected: string;
+    explanation: string;
+  }>;
+  improved_version: string;
+  alternative_tone?: string;
+  score?: number;
+  praise?: string;
+  placeholder?: boolean;
+  message?: string;
+}
+
 // Lesson: rich educational content (tananyag)
 // Supports both legacy format (summary+key_points) and language_lesson format
 export interface LessonContent {
@@ -160,7 +183,9 @@ export type FocusItemContent =
   | { kind: "cards"; data: CardsContent }
   | { kind: "roleplay"; data: RoleplayContent }
   | { kind: "writing"; data: WritingContent }
-  | { kind: "checklist"; data: ChecklistContent };
+  | { kind: "checklist"; data: ChecklistContent }
+  | { kind: "briefing"; data: BriefingContent }
+  | { kind: "feedback"; data: FeedbackContent };
 
 // ============================================================================
 // STRICT FOCUS ITEM INTERFACE
@@ -234,6 +259,10 @@ export const BACKEND_MODE_TO_KIND: Record<string, FocusItemKind> = {
   reading: "checklist",
   task: "checklist",
   feladat: "checklist",
+
+  // Career track kinds
+  briefing: "briefing",
+  feedback: "feedback",
 };
 
 // ============================================================================
@@ -270,6 +299,12 @@ export const DEFAULT_VALIDATION: Record<FocusItemKind, FocusValidation> = {
     require_proof: true,
     min_chars: 20,
   },
+  briefing: {
+    require_interaction: true,
+  },
+  feedback: {
+    require_interaction: true,
+  },
 };
 
 // ============================================================================
@@ -284,6 +319,8 @@ export const DEFAULT_SCORING: Record<FocusItemKind, FocusScoring> = {
   roleplay: { max_points: 100, partial_credit: true, auto_grade: false },
   writing: { max_points: 100, partial_credit: true, auto_grade: true },
   checklist: { max_points: 100, partial_credit: false, auto_grade: false },
+  briefing: { max_points: 0, partial_credit: false, auto_grade: false },
+  feedback: { max_points: 100, partial_credit: true, auto_grade: false },
 };
 
 // ============================================================================
@@ -298,4 +335,6 @@ export const KIND_TO_INPUT_TYPE: Record<FocusItemKind, FocusInputType> = {
   roleplay: "chat",
   writing: "text",
   checklist: "checkbox",
+  briefing: "none",
+  feedback: "none",
 };

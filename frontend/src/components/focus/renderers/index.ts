@@ -5,3 +5,5 @@ export { CardsRenderer } from "./CardsRenderer";
 export { RoleplayRenderer } from "./RoleplayRenderer";
 export { WritingRenderer } from "./WritingRenderer";
 export { ChecklistRenderer } from "./ChecklistRenderer";
+export { BriefingRenderer } from "./BriefingRenderer";
+export { FeedbackRenderer } from "./FeedbackRenderer";

@@ -73,6 +73,12 @@ export function detectKindFromRaw(raw: any): FocusItemKind {
     if (raw.content.scenario || raw.content.roles) {
       return "roleplay";
     }
+    if (raw.content.situation && raw.content.outcome) {
+      return "briefing";
+    }
+    if (raw.content.corrections && Array.isArray(raw.content.corrections)) {
+      return "feedback";
+    }
     if (raw.content.steps && Array.isArray(raw.content.steps)) {
       return "checklist";
     }
@@ -165,6 +171,35 @@ function extractContent(raw: any, kind: FocusItemKind): FocusItemContent {
         data: {
           steps: extractChecklistSteps(raw),
           proof_prompt: content?.proof_prompt || "Írd le, hogyan végezted el a feladatot:",
+        },
+      };
+
+    case "briefing":
+      return {
+        kind: "briefing",
+        data: {
+          situation: content?.situation || "A mai helyzet betöltése...",
+          outcome: content?.outcome || "",
+          key_vocabulary_preview: Array.isArray(content?.key_vocabulary_preview) ? content.key_vocabulary_preview : undefined,
+        },
+      };
+
+    case "feedback":
+      return {
+        kind: "feedback",
+        data: {
+          user_text: content?.user_text || "",
+          corrections: Array.isArray(content?.corrections) ? content.corrections.map((c: any) => ({
+            original: c.original || "",
+            corrected: c.corrected || "",
+            explanation: c.explanation || "",
+          })) : [],
+          improved_version: content?.improved_version || "",
+          alternative_tone: content?.alternative_tone,
+          score: content?.score,
+          praise: content?.praise,
+          placeholder: content?.placeholder,
+          message: content?.message,
         },
       };
   }
@@ -469,7 +504,7 @@ function isValidStrictFocusItem(item: any): item is StrictFocusItem {
 }
 
 function isValidKind(kind: any): kind is FocusItemKind {
-  return ["lesson", "translation", "quiz", "cards", "roleplay", "writing", "checklist"].includes(kind);
+  return ["lesson", "translation", "quiz", "cards", "roleplay", "writing", "checklist", "briefing", "feedback"].includes(kind);
 }
 
 // ============================================================================
@@ -621,8 +656,47 @@ export function getFallbackTemplate(kind: FocusItemKind, topic: string): StrictF
       validation: { require_interaction: true, require_proof: true, min_chars: 20 },
       scoring: { max_points: 100, partial_credit: false },
     },
+    briefing: {
+      schema_version: FOCUS_ITEM_SCHEMA_VERSION,
+      kind: "briefing",
+      title: "Mai helyzet",
+      subtitle: topic,
+      instructions_md: "Olvasd el a mai helyzet leírását:",
+      ui: { mode: "inline", estimated_minutes: 2 },
+      input: { type: "none" },
+      content: {
+        kind: "briefing",
+        data: {
+          situation: `Ma a következő munkahelyi szituációval foglalkozunk: ${topic}`,
+          outcome: "A nap végére képes leszel alkalmazni a tanultakat.",
+        },
+      },
+      validation: { require_interaction: true },
+      scoring: { max_points: 0, partial_credit: false },
+    },
+    feedback: {
+      schema_version: FOCUS_ITEM_SCHEMA_VERSION,
+      kind: "feedback",
+      title: "Visszajelzés",
+      subtitle: topic,
+      instructions_md: "Itt láthatod az AI visszajelzését az írásodról:",
+      ui: { mode: "inline", estimated_minutes: 5 },
+      input: { type: "none" },
+      content: {
+        kind: "feedback",
+        data: {
+          user_text: "",
+          corrections: [],
+          improved_version: "",
+          placeholder: true,
+          message: "Először fejezd be a szövegalkotás feladatot!",
+        },
+      },
+      validation: { require_interaction: true },
+      scoring: { max_points: 100, partial_credit: true },
+    },
   };
-  
+
   return templates[kind];
 }
 
@@ -687,6 +761,14 @@ export function checkValidationState(
     }
   }
   
+  // Briefing and feedback are read-only — always completable
+  if (item.kind === "briefing" || item.kind === "feedback") {
+    return {
+      canComplete: true,
+      progress: { current: 1, required: 1, type: "items" },
+    };
+  }
+
   // Check proof text for checklist
   if (validation.require_proof && item.kind === "checklist") {
     const proofLength = userState.proofText?.length || 0;

@@ -3,7 +3,7 @@
 
 export type LearningDomain = "language" | "programming" | "math" | "fitness" | "business" | "other";
 export type LearningLevel = "beginner" | "intermediate";
-export type ItemType = "lesson" | "quiz" | "practice" | "flashcard" | "task";
+export type ItemType = "lesson" | "quiz" | "practice" | "flashcard" | "task" | "briefing" | "feedback";
 export type PracticeType = "exercise" | "writing" | "speaking" | "coding" | "translation" | "roleplay";
 
 export interface LearningFocusConfig {

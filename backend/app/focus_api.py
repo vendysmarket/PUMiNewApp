@@ -39,7 +39,7 @@ CLAUDE_MODEL = (os.getenv("CLAUDE_MODEL") or "claude-sonnet-4-20250514").strip()
 claude = Anthropic(api_key=CLAUDE_API_KEY) if ANTHROPIC_AVAILABLE and CLAUDE_API_KEY else None
 
 ALLOWED_MODES = {"learning", "project"}
-LEARNING_TASK_TYPES = {"lesson", "quiz", "single_select", "flashcard", "cards", "translation", "roleplay", "writing", "speaking", "listening", "reading", "task", "checklist"}
+LEARNING_TASK_TYPES = {"lesson", "quiz", "single_select", "flashcard", "cards", "translation", "roleplay", "writing", "speaking", "listening", "reading", "task", "checklist", "briefing", "feedback"}
 PROJECT_TASK_TYPES = {"upload_review", "checklist", "quiz", "writing", "task"}
 UPLOAD_REVIEW_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 
@@ -169,6 +169,133 @@ def _build_content_body_md(content_data: Dict[str, Any]) -> str:
             parts.append(f"### Gyakori hibák\n{bullets}")
 
     return "\n\n".join(parts).strip()
+
+
+async def _generate_day_summary(sb, uid: str, day_id: str, day_data: dict, plan_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Generate a performance summary for a completed day.
+    Collects item progress, calculates metrics, generates LLM feedback.
+    Returns a summary dict or None if generation fails.
+    """
+    try:
+        # Get all items for this day
+        items_res = _safe_execute(
+            sb.table("focus_items")
+            .select("id, kind, type, topic, label, estimated_minutes")
+            .eq("day_id", day_id)
+            .order("order_index")
+        )
+        if not items_res or not items_res.data:
+            return None
+
+        items = items_res.data
+        item_ids = [i["id"] for i in items]
+
+        # Get progress for all items
+        progress_res = _safe_execute(
+            sb.table("focus_item_progress")
+            .select("item_id, status, score, attempts, last_result_json")
+            .eq("user_id", uid)
+            .in_("item_id", item_ids)
+        )
+        progress_map = {}
+        if progress_res and progress_res.data:
+            for p in progress_res.data:
+                progress_map[p["item_id"]] = p
+
+        # Calculate metrics
+        total_items = len(items)
+        completed_items = sum(1 for i in items if progress_map.get(i["id"], {}).get("status") == "done")
+        completion_rate = round((completed_items / total_items * 100) if total_items > 0 else 0)
+
+        # Categorize items by kind
+        kind_stats = {}
+        weak_areas = []
+        strong_areas = []
+        for item in items:
+            kind = item.get("kind") or item.get("type") or "unknown"
+            progress = progress_map.get(item["id"], {})
+            score = progress.get("score")
+            status = progress.get("status", "pending")
+
+            if kind not in kind_stats:
+                kind_stats[kind] = {"total": 0, "done": 0, "scores": []}
+            kind_stats[kind]["total"] += 1
+            if status == "done":
+                kind_stats[kind]["done"] += 1
+            if score is not None:
+                kind_stats[kind]["scores"].append(float(score))
+
+            # Track weak/strong areas
+            if status == "done" and score is not None:
+                if float(score) >= 80:
+                    strong_areas.append(item.get("topic") or item.get("label") or kind)
+                elif float(score) < 50:
+                    weak_areas.append(item.get("topic") or item.get("label") or kind)
+
+        # Build summary without LLM (fast, synchronous)
+        day_title = day_data.get("title", "")
+
+        summary = {
+            "day_title": day_title,
+            "completion_rate": completion_rate,
+            "completed_items": completed_items,
+            "total_items": total_items,
+            "kind_stats": {
+                k: {
+                    "completed": v["done"],
+                    "total": v["total"],
+                    "avg_score": round(sum(v["scores"]) / len(v["scores"])) if v["scores"] else None,
+                }
+                for k, v in kind_stats.items()
+            },
+            "strong_areas": strong_areas[:3],
+            "weak_areas": weak_areas[:3],
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+
+        # Generate short LLM feedback (using Haiku for speed)
+        try:
+            from .llm_client import call_claude_json
+            plan_res = _safe_execute(
+                sb.table("focus_plans").select("settings, domain, lang").eq("id", plan_id).maybe_single()
+            )
+            plan_lang = "hu"
+            if plan_res and plan_res.data:
+                plan_lang = plan_res.data.get("lang") or "hu"
+
+            is_hu = plan_lang.lower().startswith("hu")
+            metrics_text = f"Teljesítmény: {completion_rate}% ({completed_items}/{total_items} feladat)"
+            if strong_areas:
+                metrics_text += f"\nErős területek: {', '.join(strong_areas[:3])}"
+            if weak_areas:
+                metrics_text += f"\nGyenge területek: {', '.join(weak_areas[:3])}"
+
+            system_prompt = (
+                "Rövid (2-3 mondat) napi összegzést generálsz egy nyelvtanuló alkalmazásban. "
+                "Legyél bátorító de tárgyilagos. "
+                "Adj egy konkrét javaslatot a holnapi napra."
+            ) if is_hu else (
+                "Generate a brief (2-3 sentence) daily summary for a language learning app. "
+                "Be encouraging but honest. Give one concrete suggestion for tomorrow."
+            )
+
+            feedback = await call_claude_json(
+                system=system_prompt,
+                user=f"Napi eredmény:\n{metrics_text}\nNapi téma: {day_title}\n\nÍrj 2-3 mondatos összefoglalót JSON-ben: {{\"feedback\": \"...\", \"suggestion\": \"...\"}}",
+                max_tokens=200,
+                temperature=0.7,
+            )
+            if isinstance(feedback, dict):
+                summary["feedback"] = feedback.get("feedback", "")
+                summary["suggestion"] = feedback.get("suggestion", "")
+        except Exception as llm_err:
+            print(f"[complete-day] LLM summary failed (non-fatal): {llm_err}")
+
+        return summary
+    except Exception as err:
+        print(f"[complete-day] Summary generation failed (non-fatal): {err}")
+        return None
 
 
 def _extract_lesson_context(content: Dict[str, Any]) -> str:
@@ -734,6 +861,8 @@ ITEM_TYPE_TO_KIND = {
     "flashcard": "cards",
     "writing": "writing",
     "practice": "checklist",  # generic practice defaults to checklist
+    "briefing": "briefing",
+    "feedback": "feedback",
 }
 
 
@@ -1035,6 +1164,62 @@ def _generate_default_items_for_domain(
     domain_lower = (domain or "other").lower()
     settings = settings or {}
     minutes = settings.get("minutes_per_day", 20)
+    track = settings.get("track", "")
+
+    # Career language track: fixed 5-item structure (25 min)
+    if track == "career_language":
+        return [
+            {
+                "order_index": 0,
+                "item_key": f"d{day_index}-briefing-1",
+                "type": "briefing",
+                "kind": "briefing",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Mai helyzet",
+                "estimated_minutes": 2,
+            },
+            {
+                "order_index": 1,
+                "item_key": f"d{day_index}-phrase-pack-1",
+                "type": "flashcard",
+                "kind": "cards",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Kifejezések",
+                "estimated_minutes": 6,
+            },
+            {
+                "order_index": 2,
+                "item_key": f"d{day_index}-micro-drill-1",
+                "type": "quiz",
+                "kind": "quiz",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Gyors gyakorlat",
+                "estimated_minutes": 4,
+            },
+            {
+                "order_index": 3,
+                "item_key": f"d{day_index}-production-1",
+                "type": "writing",
+                "kind": "writing",
+                "practice_type": "writing",
+                "topic": day_title,
+                "label": "Szövegalkotás",
+                "estimated_minutes": 8,
+            },
+            {
+                "order_index": 4,
+                "item_key": f"d{day_index}-feedback-1",
+                "type": "feedback",
+                "kind": "feedback",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Visszajelzés",
+                "estimated_minutes": 5,
+            },
+        ]
 
     if domain_lower in ("project", "business"):
         items = [
@@ -2524,9 +2709,20 @@ async def complete_day(req: CompleteDayReq, request: Request):
 
     now_iso = datetime.utcnow().isoformat() + "Z"
 
-    sb.table("focus_days").update({"completed_at": now_iso}).eq("id", day.data["id"]).execute()
+    # ── Generate day summary from item progress ──
+    day_id = day.data["id"]
+    summary = await _generate_day_summary(sb, uid, day_id, day.data, req.plan_id)
 
+    update_payload = {"completed_at": now_iso}
+    if summary:
+        # Store summary in the day's content JSONB field
+        existing_content = day.data.get("content") or {}
+        if not isinstance(existing_content, dict):
+            existing_content = {}
+        existing_content["day_summary"] = summary
+        update_payload["content"] = existing_content
 
+    sb.table("focus_days").update(update_payload).eq("id", day_id).execute()
 
     # Update streak
 
@@ -2570,7 +2766,7 @@ async def complete_day(req: CompleteDayReq, request: Request):
 
 
 
-    return {"ok": True, "day_completed": True, "streak": streak}
+    return {"ok": True, "day_completed": True, "streak": streak, "summary": summary}
 
 
 
@@ -2979,7 +3175,7 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
         print(f"[generate-item-content] Using stored kind: {stored_kind}")
 
     # Validate stored_kind is a canonical kind - convert "practice" to valid kind
-    VALID_CANONICAL_KINDS = {"content", "quiz", "checklist", "upload_review", "translation", "cards", "roleplay", "writing"}
+    VALID_CANONICAL_KINDS = {"content", "quiz", "checklist", "upload_review", "translation", "cards", "roleplay", "writing", "briefing", "feedback"}
     if stored_kind not in VALID_CANONICAL_KINDS:
         # "practice" was incorrectly stored - convert based on practice_type or domain
         old_kind = stored_kind
@@ -3024,7 +3220,10 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
     is_language_domain = (domain or "").lower() in ("language_learning", "language")
 
     # DB CACHE: If content already generated and saved, return it immediately
-    existing_content = item.get("content")
+    # Feedback items are always re-generated (depend on user's production submission)
+    if stored_kind == "feedback":
+        print(f"[generate-item-content] Feedback item — skipping cache, will generate on-demand")
+    existing_content = item.get("content") if stored_kind != "feedback" else None
     if existing_content and isinstance(existing_content, dict):
         has_real_content = (
             existing_content.get("kind")
@@ -3130,6 +3329,97 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
     item_type = normalized_type    # Import generator
 
     from .llm_client import generate_focus_item
+
+    # FEEDBACK SPECIAL HANDLING: Find production item's user submission
+    if stored_kind == "feedback":
+        try:
+            day_items_res = _safe_execute(
+                sb.table("focus_items")
+                .select("id, kind, type, order_index, content, item_key, result_json")
+                .eq("day_id", day_id)
+                .order("order_index")
+            )
+            user_production_text = None
+            if day_items_res and day_items_res.data:
+                current_order = item.get("order_index", 999)
+                for di in reversed(day_items_res.data):
+                    if di.get("order_index", 999) >= current_order:
+                        continue
+                    if di.get("kind") != "writing":
+                        continue
+                    result_json = di.get("result_json") or {}
+                    if isinstance(result_json, str):
+                        try:
+                            result_json = json.loads(result_json)
+                        except:
+                            result_json = {}
+                    user_production_text = (
+                        result_json.get("user_text")
+                        or result_json.get("answer")
+                        or result_json.get("text")
+                        or ""
+                    )
+                    if user_production_text:
+                        break
+
+            if not user_production_text:
+                # User hasn't completed production yet — return placeholder
+                placeholder = {
+                    "schema_version": "1.0",
+                    "kind": "feedback",
+                    "idempotency_key": f"feedback-placeholder-{item.get('id', 'x')}",
+                    "title": "Visszajelzés",
+                    "subtitle": topic,
+                    "instructions_md": "Először fejezd be az írásfeladatot, majd itt megkapod az AI visszajelzését.",
+                    "ui": {"mode": "inline", "estimated_minutes": minutes},
+                    "input": {"type": "none", "placeholder": None},
+                    "content": {
+                        "placeholder": True,
+                        "user_text": "",
+                        "corrections": [],
+                        "improved_version": "",
+                        "message": "Először fejezd be a szövegalkotás feladatot!"
+                    },
+                    "validation": {"require_interaction": False},
+                    "scoring": {"max_points": 0, "partial_credit": False, "auto_grade": False},
+                }
+                return {"ok": True, "item_id": req.item_id, "content": placeholder}
+
+            # User has production text — generate feedback with it
+            preceding_lesson_content = f"USER'S WRITING SUBMISSION:\n{user_production_text}"
+            try:
+                content = await generate_focus_item(
+                    item_type="feedback",
+                    practice_type=None,
+                    topic=topic,
+                    label=label or "Visszajelzés",
+                    day_title=day_title or "",
+                    domain=domain,
+                    level=level,
+                    lang=lang,
+                    minutes=minutes,
+                    user_goal=user_goal or "",
+                    settings=plan_settings,
+                    preceding_lesson_content=preceding_lesson_content,
+                )
+                # Inject the user's original text
+                if isinstance(content.get("content"), dict):
+                    content["content"]["user_text"] = user_production_text
+                # Save to DB
+                _safe_execute(
+                    sb.table("focus_items")
+                    .update({"content": content})
+                    .eq("id", item["id"])
+                )
+                return {"ok": True, "item_id": req.item_id, "content": content}
+            except Exception as fb_err:
+                print(f"[generate-item-content] Feedback generation failed: {fb_err}")
+                raise HTTPException(status_code=500, detail="Feedback generation failed")
+        except HTTPException:
+            raise
+        except Exception as fb_outer_err:
+            print(f"[generate-item-content] Feedback lookup failed: {fb_outer_err}")
+            raise HTTPException(status_code=500, detail="Feedback generation error")
 
     # CONTENT CHAINING: For practice/quiz, find preceding lesson content.
     # If the lesson hasn't been generated yet, auto-generate it with Haiku (~10-15s).
