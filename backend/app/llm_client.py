@@ -1003,12 +1003,14 @@ def _build_item_generation_prompt(
   "estimated_minutes": ''' + str(minutes) + '''
 }
 RULES:
-- vocabulary_table: 5-8 entries with example_sentence
-- grammar_explanation.examples: 2-3 examples
-- dialogues: 1 dialogue, 4+ lines
-- practice_exercises: 1-2 exercises, 2+ items each
+- vocabulary_table: 5-8 entries. "word" = TARGET language, "translation" = Hungarian
+- example_sentence: in TARGET language. example_translation: Hungarian
+- grammar_explanation: explain in Hungarian, examples in TARGET language with Hungarian translation
+- dialogues: "text" = TARGET language, "translation" = Hungarian
+- practice_exercises: prompts use TARGET language, instructions in Hungarian
 - key_points: 3-5, common_mistakes: 3-5
-- ALL text in Hungarian, target language with Hungarian translation
+- introduction, instructions, explanations: Hungarian
+- The TARGET language is detected from the user_goal context
 '''
     else:
         content_spec_content = '''
@@ -1044,14 +1046,15 @@ QUALITY RULES:
         "translation": '''
 "content": {
   "sentences": [
-    { "source": "Sentence to translate", "target_lang": "''' + lang + '''", "hint": "optional hint" },
-    { "source": "Second sentence", "target_lang": "''' + lang + '''", "hint": "optional hint" }
+    { "source": "Hungarian sentence to translate", "target_lang": "the target language being learned", "hint": "optional hint" },
+    { "source": "Second Hungarian sentence", "target_lang": "the target language being learned", "hint": "optional hint" }
   ]
 }
 RULES:
 - sentences: 4-6 items
-- source: Hungarian sentence to translate
-- target_lang: the language being learned
+- source: Hungarian sentence (the user translates this INTO the target language)
+- target_lang: code of the language being learned (en, it, de, etc.)
+- hint: optional hint in the target language
 - Keep sentences aligned to the lesson topic
 ''',
         "quiz": '''
@@ -1154,6 +1157,22 @@ QUALITY RULES:
 ''',
     }
 
+    # For language domain: detect target language from user_goal
+    language_direction_note = ""
+    if is_language_domain:
+        language_direction_note = f"""
+🌍 LANGUAGE LEARNING DIRECTION:
+- The user's NATIVE language is {"Hungarian" if is_hu else "English"} (used for UI, instructions, explanations).
+- The TARGET language the user is LEARNING is specified in user_goal below.
+- Detect the target language from user_goal (e.g., "angolul beszélni" = English, "olaszul tanulni" = Italian).
+- vocabulary_table: "word" = TARGET language, "translation" = Hungarian
+- example_sentence: in TARGET language, example_translation: in Hungarian
+- dialogues: "text" = TARGET language, "translation" = Hungarian
+- grammar_explanation: explain in Hungarian, examples in TARGET language
+- Quiz questions: test TARGET language knowledge (e.g., "What does X mean?" or "How do you say Y in [target]?")
+- Translation exercises: translate FROM Hungarian TO target language
+"""
+
     system = f"""You are generating ONE Focus Item for a learning app.
 
 STRICT OUTPUT RULES:
@@ -1164,8 +1183,8 @@ STRICT OUTPUT RULES:
 - instructions_md must be short and actionable (2-3 sentences max).
 - rubric_md must tell how the user knows they did it right.
 - content must contain all fields required by the {kind} kind.
-- All text content in {"Hungarian" if is_hu else "English"}.
-
+- {"Instructions and explanations in Hungarian. See LANGUAGE LEARNING DIRECTION below for vocabulary/content direction." if is_language_domain else f"All text content in {'Hungarian' if is_hu else 'English'}."}
+{language_direction_note}
 🎨 STYLE GUIDANCE (apply to ALL generated content):
 - TONE: {tone_guide}
 - DIFFICULTY: {difficulty_guide}
@@ -1184,7 +1203,7 @@ SCHEMA:
 CONTENT SPEC FOR kind={kind}:
 {content_specs.get(kind, "{}")}
 
-LANGUAGE: {"Hungarian (hu)" if is_hu else "English (en)"}
+LANGUAGE: {"Hungarian (hu) — native. Target language from user_goal." if is_language_domain else ("Hungarian (hu)" if is_hu else "English (en)")}
 """
 
     user = f"""Generate ONE focus item.
@@ -1209,6 +1228,8 @@ IMPORTANT - CONTENT CHAINING:
 The user just completed a lesson. You MUST build this item using ONLY the vocabulary,
 grammar rules, and examples from THAT lesson. Do NOT introduce new material.
 ONLY use the vocabulary list below (VOCABULARY section) when creating questions/tasks.
+CRITICAL: The VOCABULARY section contains TARGET LANGUAGE words (left side) = Hungarian translations (right side).
+Quiz/practice must test the TARGET LANGUAGE (left side), not Hungarian.
 
 --- PRECEDING LESSON CONTENT ---
 {preceding_lesson_content[:3000]}
@@ -1216,31 +1237,34 @@ ONLY use the vocabulary list below (VOCABULARY section) when creating questions/
 """
         if kind == "quiz":
             user += """
-Generate quiz questions that directly test:
-1. Vocabulary from the vocabulary_table (word meanings, translations)
-2. Grammar rules from grammar_explanation (correct forms, patterns)
-3. Dialogue comprehension (what was said, appropriate responses)
-4. Common mistakes awareness (identify the error)
-Include at least: 2 vocab questions, 1 grammar question, 1 dialogue question, 1 mistake question (if available).
+Generate quiz questions that test TARGET LANGUAGE knowledge:
+1. Vocabulary: "How do you say [Hungarian word] in [target language]?" or "What does [target word] mean?"
+2. Grammar: test correct TARGET LANGUAGE forms and patterns
+3. Dialogue: comprehension of TARGET LANGUAGE sentences
+4. Common mistakes: identify errors in TARGET LANGUAGE usage
+Options should include TARGET LANGUAGE words/phrases, not only Hungarian.
+Include at least: 2 vocab questions, 1 grammar question, 1 dialogue/mistake question.
 """
         elif kind == "translation":
             user += """
-Generate translation items that ONLY use lesson vocabulary and grammar patterns.
-Keep sentences short and directly aligned to the lesson examples.
+Generate translation items: translate FROM Hungarian TO the target language.
+"source" = Hungarian sentence, "target_lang" = the target language code.
+ONLY use vocabulary from the lesson. Keep sentences short.
 """
         elif kind == "roleplay":
             user += """
-Create a dialogue scenario that reuses lesson vocabulary and grammar structures.
-Include must_use_phrases from the vocabulary_table where possible.
+Create a dialogue scenario IN THE TARGET LANGUAGE.
+The user practices speaking the TARGET language, not Hungarian.
+Reuse lesson vocabulary and grammar structures.
 """
         elif kind == "writing":
             user += """
-Create a short writing prompt that requires using the lesson's key vocabulary
-and the specific grammar rule taught in the lesson.
+Create a short writing prompt where the user writes IN THE TARGET LANGUAGE.
+Require using the lesson's key vocabulary and grammar rule.
 """
         elif kind == "cards":
             user += """
-Create flashcards ONLY from the lesson vocabulary_table (front = target language, back = Hungarian).
+Create flashcards from the lesson vocabulary: front = TARGET LANGUAGE word, back = Hungarian translation.
 """
 
     user += "\nOutput ONLY the JSON object, nothing else.\n"
