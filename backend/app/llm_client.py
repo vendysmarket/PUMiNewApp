@@ -1168,21 +1168,46 @@ QUALITY RULES:
 ''',
     }
 
-    # For language domain: detect target language from user_goal
+    # For language domain: use explicit target_language from settings, fallback to detection from user_goal
     language_direction_note = ""
+    scope_note = ""
     if is_language_domain:
+        target_lang = (settings or {}).get("target_language", "")
+        if not target_lang:
+            # Legacy fallback for old plans without explicit target_language
+            target_lang = "the target language the user is learning (detect from user_goal below, e.g. 'angolul beszélni' = English)"
+
         language_direction_note = f"""
 🌍 LANGUAGE LEARNING DIRECTION:
 - The user's NATIVE language is {"Hungarian" if is_hu else "English"} (used for UI, instructions, explanations).
-- The TARGET language the user is LEARNING is specified in user_goal below.
-- Detect the target language from user_goal (e.g., "angolul beszélni" = English, "olaszul tanulni" = Italian).
-- vocabulary_table: "word" = TARGET language, "translation" = Hungarian
-- example_sentence: in TARGET language, example_translation: in Hungarian
-- dialogues: "text" = TARGET language, "translation" = Hungarian
-- grammar_explanation: explain in Hungarian, examples in TARGET language
-- Quiz questions: test TARGET language knowledge (e.g., "What does X mean?" or "How do you say Y in [target]?")
-- Translation exercises: translate FROM Hungarian TO target language
+- The TARGET language the user is LEARNING is: {target_lang}
+- vocabulary_table: "word" = {target_lang}, "translation" = Hungarian
+- example_sentence: in {target_lang}, example_translation: in Hungarian
+- dialogues: "text" = {target_lang}, "translation" = Hungarian
+- grammar_explanation: explain in Hungarian, examples in {target_lang}
+- Quiz questions: test {target_lang} knowledge (e.g., "What does X mean?" or "How do you say Y in [{target_lang}]?")
+- Translation exercises: translate FROM Hungarian TO {target_lang}
 """
+
+        # SCOPE ENFORCEMENT: If week_outline is available, extract day-level vocabulary constraints
+        week_outline = (settings or {}).get("week_outline")
+        if week_outline and isinstance(week_outline, dict):
+            outline_days = week_outline.get("days", [])
+            for od in outline_days:
+                day_num = od.get("day", 0)
+                if f"Nap {day_num}" in (day_title or "") or f"Day {day_num}" in (day_title or ""):
+                    vocab = od.get("key_vocab", [])
+                    grammar = od.get("grammar_focus", "")
+                    if vocab:
+                        scope_note = f"""
+🔒 SCOPE ENFORCEMENT (MANDATORY):
+- This day's ALLOWED vocabulary: {', '.join(vocab)}
+- This day's grammar focus: {grammar}
+- You MUST ONLY use words from the allowed vocabulary list above.
+- Do NOT introduce new vocabulary or phrases that are not in this list.
+- All examples, exercises, dialogues, quiz questions MUST stay within this vocabulary scope.
+"""
+                    break
 
     system = f"""You are generating ONE Focus Item for a learning app.
 
@@ -1196,6 +1221,7 @@ STRICT OUTPUT RULES:
 - content must contain all fields required by the {kind} kind.
 - {"Instructions and explanations in Hungarian. See LANGUAGE LEARNING DIRECTION below for vocabulary/content direction." if is_language_domain else f"All text content in {'Hungarian' if is_hu else 'English'}."}
 {language_direction_note}
+{scope_note}
 🎨 STYLE GUIDANCE (apply to ALL generated content):
 - TONE: {tone_guide}
 - DIFFICULTY: {difficulty_guide}

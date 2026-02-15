@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Loader2, BookOpen, Briefcase, Target, Clock, Zap, MessageSquare } from "lucide-react";
-import { WizardData, DEFAULT_WIZARD_DATA, FocusType, Tone, Difficulty, Pacing } from "@/types/focusWizard";
+import { WizardData, DEFAULT_WIZARD_DATA, FocusType, Tone, Difficulty, Pacing, LanguageTrack } from "@/types/focusWizard";
 
 interface FocusWizardProps {
   onComplete: (data: WizardData) => Promise<void>;
@@ -37,11 +37,20 @@ const LANGUAGE_GOALS = [
 ];
 
 const LANGUAGES = [
-  { value: "italian", label: "Olasz" },
-  { value: "greek", label: "Görög" },
   { value: "english", label: "Angol" },
   { value: "german", label: "Német" },
   { value: "spanish", label: "Spanyol" },
+  { value: "italian", label: "Olasz" },
+  { value: "french", label: "Francia" },
+  { value: "greek", label: "Görög" },
+  { value: "portuguese", label: "Portugál" },
+  { value: "korean", label: "Koreai" },
+  { value: "japanese", label: "Japán" },
+];
+
+const TRACKS: Array<{ value: LanguageTrack; label: string; desc: string }> = [
+  { value: "foundations_language", label: "Felfedező / Alapozó", desc: "Abc, alapszókincs, első mondatok" },
+  { value: "career_language", label: "Karrier", desc: "B1+ email, meeting, interjú" },
 ];
 
 const MINUTES_OPTIONS = [
@@ -73,8 +82,9 @@ export function FocusWizard({ onComplete, onCancel, isGenerating }: FocusWizardP
   
   // Step 3 specific states
   const [languageLevel, setLanguageLevel] = useState<string>("beginner");
-  const [targetLanguage, setTargetLanguage] = useState<string>("italian");
+  const [targetLanguage, setTargetLanguage] = useState<string>("english");
   const [languageGoal, setLanguageGoal] = useState<string>("speaking");
+  const [languageTrack, setLanguageTrack] = useState<LanguageTrack>("foundations_language");
   const [minutesPerDay, setMinutesPerDay] = useState<number>(20);
   const [customContext, setCustomContext] = useState<string>("");
 
@@ -101,6 +111,7 @@ export function FocusWizard({ onComplete, onCancel, isGenerating }: FocusWizardP
             targetLanguage,
             goal: languageGoal as any,
             minutesPerDay: minutesPerDay as any,
+            track: languageTrack,
           },
         });
       } else {
@@ -227,11 +238,37 @@ export function FocusWizard({ onComplete, onCancel, isGenerating }: FocusWizardP
               {LANGUAGE_LEVELS.map(({ value, label }) => (
                 <button
                   key={value}
-                  onClick={() => setLanguageLevel(value)}
+                  onClick={() => {
+                    setLanguageLevel(value);
+                    // Auto-select track based on level
+                    if (value === "intermediate") setLanguageTrack("career_language");
+                    else if (value === "beginner") setLanguageTrack("foundations_language");
+                  }}
                   className={`py-2 px-3 rounded-lg text-sm transition-all
                     ${languageLevel === value ? "bg-foreground text-background" : "bg-secondary/50 hover:bg-secondary"}`}
                 >
                   {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm text-muted-foreground mb-2 block">Tanulási mód</label>
+            <div className="grid gap-2">
+              {TRACKS.map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  onClick={() => setLanguageTrack(value)}
+                  className={`p-3 rounded-xl text-left transition-all flex items-center justify-between
+                    ${languageTrack === value
+                      ? "bg-foreground text-background"
+                      : "bg-secondary/50 hover:bg-secondary"}`}
+                >
+                  <span className="font-medium text-sm">{label}</span>
+                  <span className={`text-xs ${languageTrack === value ? "text-background/70" : "text-muted-foreground"}`}>
+                    {desc}
+                  </span>
                 </button>
               ))}
             </div>

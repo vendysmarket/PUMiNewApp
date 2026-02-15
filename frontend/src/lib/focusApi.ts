@@ -49,6 +49,10 @@ export type CreatePlanPayload = {
   pacing?: "small_steps" | "big_blocks";
   // Force new plan creation (skip idempotency, archive old plan)
   force_new?: boolean;
+  // Track system fields
+  target_language?: string;    // explicit target language (e.g., "english", "greek")
+  track?: string;              // "foundations_language" | "career_language"
+  week_outline?: any;          // WeekPlan JSON for backend scope enforcement
 };
 
 export const focusApi = {

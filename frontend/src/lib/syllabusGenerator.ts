@@ -1,10 +1,18 @@
 // src/lib/syllabusGenerator.ts
 // Generates a structured 7-day syllabus via Claude, maps to backend items
 
-import type { WizardData, WizardStep3Language } from "@/types/focusWizard";
+import type { WizardData, WizardStep3Language, LanguageTrack } from "@/types/focusWizard";
 import type { WeekPlan, SyllabusDay, SyllabusBlock, SyllabusBlockType } from "@/types/syllabus";
 import { MAIN_TASK_ROTATION, BLOCK_TYPE_TO_ITEM_TYPE } from "@/types/syllabus";
 import { pumiInvoke } from "@/lib/pumiInvoke";
+
+// Track-specific block structures
+const FOUNDATIONS_BLOCK_IDS = ["lesson_1", "lightning_1", "lesson_2", "lightning_2", "main"] as const;
+const CAREER_BLOCK_IDS = ["situation", "phrases", "output", "drill", "main"] as const;
+
+function getExpectedBlockIds(track?: LanguageTrack): readonly string[] {
+  return track === "career_language" ? CAREER_BLOCK_IDS : FOUNDATIONS_BLOCK_IDS;
+}
 
 // ============================================================================
 // PROMPT BUILDER
@@ -15,12 +23,44 @@ function buildSyllabusPrompt(wizardData: WizardData): string {
   const language = step3?.targetLanguage || "english";
   const level = step3?.level || "beginner";
   const minutesPerDay = step3?.minutesPerDay || 20;
+  const track = step3?.track;
   const goal = wizardData.step2.goalSentence;
   const durationDays = Math.min(wizardData.step2.durationDays, 7);
 
   const rotation = MAIN_TASK_ROTATION.slice(0, durationDays)
     .map((t, i) => `Day ${i + 1}: ${t}`)
     .join(", ");
+
+  // Track-specific block structure for the prompt
+  const isCareer = track === "career_language";
+  const blockStructure = isCareer
+    ? `   - situation (lesson block - situational input: email, meeting, interview, phone call)
+   - phrases (quick quiz on situation phrases only)
+   - output (lesson block - active production: write 5 sentences, reply to email, etc.)
+   - drill (quick quiz on output material only)
+   - main (main task - type rotates by day)`
+    : `   - lesson_1 (lesson block)
+   - lightning_1 (quick quiz on lesson_1 material only)
+   - lesson_2 (lesson block - same day theme but practical usage)
+   - lightning_2 (quick quiz on lesson_2 material only)
+   - main (main task - type rotates by day)`;
+
+  const blockIds = isCareer ? CAREER_BLOCK_IDS : FOUNDATIONS_BLOCK_IDS;
+  const blockExample = isCareer
+    ? `        { "block_id": "situation", "block_type": "lesson", "title_hu": "Szituáció", "topic_seed": "konkretan milyen szituacio", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
+        { "block_id": "phrases", "block_type": "lightning", "title_hu": "Kifejezések", "topic_seed": "rovid kviz a szituacio kifejezeseibol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
+        { "block_id": "output", "block_type": "lesson", "title_hu": "Aktív gyakorlat", "topic_seed": "aktiv hasznalat, iras, fogalmazas", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
+        { "block_id": "drill", "block_type": "lightning", "title_hu": "Drill", "topic_seed": "rovid kviz az aktiv gyakorlatbol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
+        { "block_id": "main", "block_type": "ROTATION_TYPE", "title_hu": "Fo feladat", "topic_seed": "...", "estimated_minutes": ${Math.round(minutesPerDay * 0.3)} }`
+    : `        { "block_id": "lesson_1", "block_type": "lesson", "title_hu": "Tananyag I.", "topic_seed": "konkretan mit tanit", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
+        { "block_id": "lightning_1", "block_type": "lightning", "title_hu": "Villamkviz I.", "topic_seed": "rovid kviz az elozo tananyagbol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
+        { "block_id": "lesson_2", "block_type": "lesson", "title_hu": "Tananyag II.", "topic_seed": "gyakorlati hasznalat", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
+        { "block_id": "lightning_2", "block_type": "lightning", "title_hu": "Villamkviz II.", "topic_seed": "rovid kviz a masodik tananyagbol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
+        { "block_id": "main", "block_type": "ROTATION_TYPE", "title_hu": "Fo feladat", "topic_seed": "...", "estimated_minutes": ${Math.round(minutesPerDay * 0.3)} }`;
+
+  const trackNote = isCareer
+    ? `\nTrack: CAREER LANGUAGE (B1+ level, situational learning: email, meetings, interviews, phone calls)`
+    : "";
 
   return `You are a curriculum designer for a language learning app.
 Your job is to produce a coherent ${durationDays}-day micro-syllabus.
@@ -31,19 +71,15 @@ Create a ${durationDays}-day syllabus for:
 - user_native_language: "Hungarian"
 - level: "${level}"
 - minutes_per_day: ${minutesPerDay}
-- goal: "${goal}"
+- goal: "${goal}"${trackNote}
 
 Rules:
 1) Every day MUST include exactly 5 blocks in this order:
-   - lesson_1 (lesson block)
-   - lightning_1 (quick quiz on lesson_1 material only)
-   - lesson_2 (lesson block - same day theme but practical usage)
-   - lightning_2 (quick quiz on lesson_2 material only)
-   - main (main task - type rotates by day)
+${blockStructure}
 2) main task block_type rotates: ${rotation}
 3) Total minutes per day ≈ ${minutesPerDay}
 4) topic_seed must be specific to the day's theme (not generic)
-5) lightning blocks quiz ONLY material from the preceding lesson block
+5) lightning/quiz blocks quiz ONLY material from the preceding lesson block
 6) key_vocab: 8-12 words per day, progressing in difficulty
 7) Each day's theme builds on previous days
 8) vocab_hint in lesson blocks must be a subset of that day's key_vocab
@@ -62,11 +98,7 @@ Return ONLY this JSON (no markdown fences):
       "grammar_focus": "string - nyelvtani fokusz",
       "key_vocab": ["szo1", "szo2", "...8-12 szo"],
       "blocks": [
-        { "block_id": "lesson_1", "block_type": "lesson", "title_hu": "Tananyag I.", "topic_seed": "konkretan mit tanit", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
-        { "block_id": "lightning_1", "block_type": "lightning", "title_hu": "Villamkviz I.", "topic_seed": "rovid kviz az elozo tananyagbol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
-        { "block_id": "lesson_2", "block_type": "lesson", "title_hu": "Tananyag II.", "topic_seed": "gyakorlati hasznalat", "grammar_focus": "...", "vocab_hint": ["3-5 szo"], "estimated_minutes": ${Math.round(minutesPerDay * 0.25)} },
-        { "block_id": "lightning_2", "block_type": "lightning", "title_hu": "Villamkviz II.", "topic_seed": "rovid kviz a masodik tananyagbol", "estimated_minutes": ${Math.round(minutesPerDay * 0.1)} },
-        { "block_id": "main", "block_type": "ROTATION_TYPE", "title_hu": "Fo feladat", "topic_seed": "...", "estimated_minutes": ${Math.round(minutesPerDay * 0.3)} }
+${blockExample}
       ]
     }
   ]
@@ -98,8 +130,8 @@ function extractJsonFromText(text: string): any {
 // ============================================================================
 
 function getDefaultBlockType(blockId: string, dayIndex: number): SyllabusBlockType {
-  if (blockId.startsWith("lesson")) return "lesson";
-  if (blockId.startsWith("lightning")) return "lightning";
+  if (blockId.startsWith("lesson") || blockId === "situation" || blockId === "output") return "lesson";
+  if (blockId.startsWith("lightning") || blockId === "phrases" || blockId === "drill") return "lightning";
   return MAIN_TASK_ROTATION[dayIndex % MAIN_TASK_ROTATION.length];
 }
 
@@ -109,13 +141,17 @@ function getDefaultTitle(blockId: string): string {
     case "lightning_1": return "Villamkviz I.";
     case "lesson_2": return "Tananyag II.";
     case "lightning_2": return "Villamkviz II.";
+    case "situation": return "Szituáció";
+    case "phrases": return "Kifejezések";
+    case "output": return "Aktív gyakorlat";
+    case "drill": return "Drill";
     case "main": return "Fo feladat";
     default: return blockId;
   }
 }
 
-function validateWeekPlan(raw: any): WeekPlan {
-  const expectedBlockIds = ["lesson_1", "lightning_1", "lesson_2", "lightning_2", "main"];
+function validateWeekPlan(raw: any, track?: LanguageTrack): WeekPlan {
+  const expectedBlockIds = [...getExpectedBlockIds(track)];
 
   const days: SyllabusDay[] = (raw.days || []).map((d: any, i: number) => {
     const rawBlocks: any[] = d.blocks || [];
@@ -537,8 +573,9 @@ export async function generateSyllabus(wizardData: WizardData): Promise<WeekPlan
     return templatePlan;
   }
 
-  const weekPlan = validateWeekPlan(parsed);
-  console.log("[SYLLABUS] Generated:", weekPlan.days.length, "days");
+  const step3 = wizardData.step3 as WizardStep3Language | null;
+  const weekPlan = validateWeekPlan(parsed, step3?.track);
+  console.log("[SYLLABUS] Generated:", weekPlan.days.length, "days, track:", step3?.track || "foundations_language");
   return weekPlan;
 }
 
@@ -563,9 +600,9 @@ export interface DayForBackend {
 
 export function mapSyllabusToDays(weekPlan: WeekPlan, goalTitle: string, totalDays: number): DayForBackend[] {
   const days: DayForBackend[] = weekPlan.days.map((day) => {
-    // Collect lesson vocab_hints for scope-guarding quizzes
-    const lesson1Vocab = day.blocks.find(b => b.block_id === "lesson_1")?.vocab_hint || [];
-    const lesson2Vocab = day.blocks.find(b => b.block_id === "lesson_2")?.vocab_hint || [];
+    // Collect lesson vocab_hints for scope-guarding quizzes (supports both track block IDs)
+    const lesson1Vocab = day.blocks.find(b => b.block_id === "lesson_1" || b.block_id === "situation")?.vocab_hint || [];
+    const lesson2Vocab = day.blocks.find(b => b.block_id === "lesson_2" || b.block_id === "output")?.vocab_hint || [];
     const allDayVocab = day.key_vocab.length > 0 ? day.key_vocab : [...lesson1Vocab, ...lesson2Vocab];
 
     const items = day.blocks.map((block) => {
@@ -575,8 +612,8 @@ export function mapSyllabusToDays(weekPlan: WeekPlan, goalTitle: string, totalDa
 
       if (block.block_type === "lightning" || block.block_type === "quiz" || block.block_type === "recap_mix") {
         // Scope-guarded quiz: explicitly constrain to day vocab
-        const quizVocab = block.block_id === "lightning_1" ? lesson1Vocab
-          : block.block_id === "lightning_2" ? lesson2Vocab
+        const quizVocab = (block.block_id === "lightning_1" || block.block_id === "phrases") ? lesson1Vocab
+          : (block.block_id === "lightning_2" || block.block_id === "drill") ? lesson2Vocab
           : allDayVocab;
         const vocabList = quizVocab.length > 0 ? quizVocab.join(", ") : allDayVocab.join(", ");
         topic = `${day.theme_hu} - ${block.topic_seed || "kvíz"}. KIZÁRÓLAG ezekből a szavakból/kifejezésekből kérdezz: ${vocabList}`;

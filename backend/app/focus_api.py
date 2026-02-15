@@ -992,7 +992,10 @@ class CreatePlanReq(BaseModel):
 
     days: List[FocusDayInput]
 
-
+    # Track system fields
+    target_language: Optional[str] = None   # explicit target language (e.g., "english", "greek")
+    track: Optional[str] = None             # "foundations_language" | "career_language"
+    week_outline: Optional[Dict[str, Any]] = None  # WeekPlan JSON for backend scope enforcement
 
     class Config:
 
@@ -1295,13 +1298,20 @@ async def create_plan(req: CreatePlanReq, request: Request):
         plan_id = str(uuid.uuid4())
         now_iso = datetime.utcnow().isoformat() + "Z"
 
-        # Build settings JSON for wizard preferences
+        # Build settings JSON for wizard preferences + track system
         settings = {
             "minutes_per_day": req.minutes_per_day or 20,
             "tone": req.tone or "neutral",
             "difficulty": req.difficulty or "normal",
             "pacing": req.pacing or "small_steps",
         }
+        # Track system fields (only store if provided)
+        if req.target_language:
+            settings["target_language"] = req.target_language
+        if req.track:
+            settings["track"] = req.track
+        if req.week_outline:
+            settings["week_outline"] = req.week_outline
 
         plan_row = {
             "id": plan_id,

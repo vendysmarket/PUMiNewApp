@@ -4,6 +4,7 @@
 export type FocusType = "language" | "project";
 export type LanguageLevel = "beginner" | "basic" | "intermediate";
 export type LanguageGoal = "speaking" | "reading" | "travel" | "work";
+export type LanguageTrack = "foundations_language" | "career_language";
 export type ProjectType = "product" | "learning" | "admin" | "creative";
 export type ProjectConstraint = "time" | "budget" | "focus";
 export type Tone = "casual" | "neutral" | "strict";
@@ -24,6 +25,7 @@ export interface WizardStep3Language {
   targetLanguage: string;
   goal: LanguageGoal;
   minutesPerDay: 10 | 20 | 45;
+  track?: LanguageTrack;
 }
 
 export interface WizardStep3Project {

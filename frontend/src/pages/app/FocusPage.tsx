@@ -277,6 +277,11 @@ export default function FocusPage() {
         intro: "",
         items: [],
       }));
+      // Extract track system fields from wizard step3
+      const step3Lang = data.step3 && "targetLanguage" in data.step3
+        ? (data.step3 as import("@/types/focusWizard").WizardStep3Language)
+        : null;
+
       const createResult = await focusApi.createPlan({
         title: goalTitle,
         message: goalTitle,
@@ -289,6 +294,10 @@ export default function FocusPage() {
         force_new: false,
         mode,
         days,
+        // Track system: explicit target language + track + week outline for scope enforcement
+        target_language: step3Lang?.targetLanguage,
+        track: step3Lang?.track,
+        week_outline: syllabusData || undefined,
       });
 
       if (!createResult.ok) {
