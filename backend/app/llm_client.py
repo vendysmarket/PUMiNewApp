@@ -36,7 +36,7 @@ CLAUDE_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 # - SONNET: High-quality conversational responses (low token usage ~300 tokens)
 # - HAIKU: Fast JSON generation tasks (high token usage but cheaper)
 CLAUDE_MODEL_SONNET = (os.getenv("CLAUDE_MODEL_SONNET") or "claude-sonnet-4-20250514").strip()
-CLAUDE_MODEL_HAIKU = (os.getenv("CLAUDE_MODEL_HAIKU") or "claude-3-haiku-20240307").strip()
+CLAUDE_MODEL_HAIKU = (os.getenv("CLAUDE_MODEL_HAIKU") or "claude-3-5-haiku-20241022").strip()
 
 # Default model for backwards compatibility
 CLAUDE_MODEL = CLAUDE_MODEL_HAIKU
@@ -1346,11 +1346,11 @@ async def generate_focus_item(
         return False
 
     if kind == "content" and is_language_domain:
-        # Language lessons: use Haiku directly for speed (avoids edge function timeouts)
+        # Language lessons: use Haiku with generous token budget for complex JSON
         text = await _claude_json_haiku(
             system=system,
             user=user,
-            max_tokens=3000,
+            max_tokens=4096,
             temperature=0.3,
         )
     elif kind == "content":
@@ -1372,7 +1372,10 @@ async def generate_focus_item(
 
     # Check for API errors
     if _is_llm_error(text):
+        print(f"[FOCUS_ITEM] LLM ERROR for {kind}/{domain}: {text[:200]}")
         raise RuntimeError("Claude API temporarily unavailable")
+
+    print(f"[FOCUS_ITEM] LLM response for {kind}/{domain} ({len(text)} chars, model={CLAUDE_MODEL_HAIKU})")
 
     # Parse JSON
     s = _strip_json_fences(text)
@@ -1380,7 +1383,7 @@ async def generate_focus_item(
 
     if not data:
         if retry_count < 2:
-            print(f"[FOCUS_ITEM] JSON parse failed, retrying... Response: {text[:200]}")
+            print(f"[FOCUS_ITEM] JSON parse failed (retry {retry_count}), response: {text[:300]}")
             return await generate_focus_item(
                 item_type=item_type,
                 practice_type=practice_type,
@@ -1417,7 +1420,7 @@ async def generate_focus_item(
     # Validate
     is_valid, error = _validate_focus_item(data)
     if not is_valid:
-        print(f"[FOCUS_ITEM] Validation failed: {error}")
+        print(f"[FOCUS_ITEM] Validation failed (retry {retry_count}): {error} | kind={kind} domain={domain}")
         if retry_count < 2:
             # Retry with fix instruction
             return await generate_focus_item(
@@ -1435,7 +1438,8 @@ async def generate_focus_item(
                 settings=settings,
                 preceding_lesson_content=preceding_lesson_content,
             )
-        # Return fallback
+        # Return fallback after all retries exhausted
+        print(f"[FOCUS_ITEM] FALLBACK for {kind}/{domain}/{topic[:50]} after {retry_count+1} attempts")
         fallback = _create_fallback_item(kind, topic, label, lang, minutes, domain=domain)
         if preceding_lesson_content and kind != "content":
             fallback["chain_version"] = "lesson_v2"
