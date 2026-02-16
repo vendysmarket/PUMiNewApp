@@ -122,7 +122,7 @@ export default function FocusPage() {
   
   const fetchStreak = async () => {
     try {
-      const stats = await focusApi.stats();
+      const stats = await focusApi.stats("learning");
       if (stats.ok) {
         setStreak(stats.streak);
         setLastStreakDate(stats.last_streak_date || null);
@@ -429,7 +429,8 @@ export default function FocusPage() {
       }
 
       console.log("[FOCUS] Day loaded:", day);
-      commitDay(day, dayIndex);
+      setSelectedDayIndex(dayIdx);
+      commitDay(day, dayIdx);
     } catch (err) {
       console.error("[FOCUS] Start day error:", err);
       setError(parseNetworkError(err));
@@ -535,13 +536,19 @@ export default function FocusPage() {
   // ARCHIVE & RESET
   // ============================================================================
   
-  const handleArchive = () => {
-    // Archive current plan
-    if (planMeta) {
-      const archivedMeta = { ...planMeta, archived: true };
-      // Could save to archive storage here
+  const handleArchive = async () => {
+    // Archive plan in the database
+    const planId = localStorage.getItem("pumi_focus_plan_id");
+    if (planId) {
+      const mode = outline?.domain === "project" || outline?.focus_type === "project" ? "project" : "learning";
+      try {
+        await focusApi.reset({ plan_id: planId, reset_mode: "archive", mode });
+        console.log("[FOCUS] Plan archived in DB:", planId);
+      } catch (err) {
+        console.error("[FOCUS] Failed to archive plan in DB:", err);
+      }
     }
-    
+
     // Clear all state
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(PLAN_META_KEY);
@@ -550,11 +557,11 @@ export default function FocusPage() {
     localStorage.removeItem("pumi_focus_plan_id");
     localStorage.removeItem("pumi_focus_syllabus");
 
-    // Clear item caches
+    // Clear item caches (both old and new prefix)
     Object.keys(localStorage)
-      .filter(k => k.startsWith("pumi_item_"))
+      .filter(k => k.startsWith("pumi_item_") || k.startsWith("focus_item_v5_"))
       .forEach(k => localStorage.removeItem(k));
-    
+
     setPlanMeta(null);
     setOutline(null);
     setCurrentDay(null);
