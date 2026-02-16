@@ -2403,8 +2403,9 @@ def _normalize_focus_day_items(data: Dict[str, Any], day_index: int, is_hu: bool
     DOMAIN SAFETY: Non-language domains get quiz/writing/checklist instead of
     translation/exercise/roleplay.
     """
-    # Career track has a fixed structure — do not add/remove items
-    if (settings or {}).get("track") == "career_language":
+    # Fixed-structure tracks — do not add/remove items
+    track = (settings or {}).get("track", "")
+    if track in ("career_language", "foundations_language"):
         return data
 
     items = data.get("items", [])

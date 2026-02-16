@@ -1166,6 +1166,116 @@ def _generate_default_items_for_domain(
     minutes = settings.get("minutes_per_day", 20)
     track = settings.get("track", "")
 
+    # ── Non-Latin script detection for foundations early days ──
+    NON_LATIN_LANGUAGES = {
+        "greek", "korean", "japanese", "chinese", "mandarin",
+        "arabic", "hebrew", "hindi", "thai", "russian",
+        "ukrainian", "georgian", "armenian", "bengali", "tamil",
+    }
+    target_lang = (settings.get("target_language") or "").lower()
+    is_non_latin = target_lang in NON_LATIN_LANGUAGES
+
+    # ── Foundations language track: fixed 5-item structure ──
+    if track == "foundations_language":
+        # Early days for non-Latin scripts: alphabet + reading focus
+        if is_non_latin and day_index <= 1:
+            return [
+                {
+                    "order_index": 0,
+                    "item_key": f"d{day_index}-lesson-1",
+                    "type": "lesson",
+                    "kind": "content",
+                    "practice_type": None,
+                    "topic": f"{day_title} - Ábécé és hangok" if day_index == 0 else f"{day_title} - Olvasás és kiejtés",
+                    "label": "Tananyag",
+                    "estimated_minutes": 8,
+                },
+                {
+                    "order_index": 1,
+                    "item_key": f"d{day_index}-cards-1",
+                    "type": "flashcard",
+                    "kind": "cards",
+                    "practice_type": None,
+                    "topic": f"{day_title} - Karakterek" if day_index == 0 else f"{day_title} - Szótagok",
+                    "label": "Kártyák",
+                    "estimated_minutes": 5,
+                },
+                {
+                    "order_index": 2,
+                    "item_key": f"d{day_index}-quiz-1",
+                    "type": "quiz",
+                    "kind": "quiz",
+                    "practice_type": None,
+                    "topic": day_title,
+                    "label": "Kvíz",
+                    "estimated_minutes": 4,
+                },
+                {
+                    "order_index": 3,
+                    "item_key": f"d{day_index}-translation-1",
+                    "type": "translation",
+                    "kind": "translation",
+                    "practice_type": "translation",
+                    "topic": day_title,
+                    "label": "Fordítás",
+                    "estimated_minutes": 5,
+                },
+            ]
+
+        # Standard foundations day: lesson → cards → quiz → translation → roleplay
+        return [
+            {
+                "order_index": 0,
+                "item_key": f"d{day_index}-lesson-1",
+                "type": "lesson",
+                "kind": "content",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Tananyag",
+                "estimated_minutes": 6,
+            },
+            {
+                "order_index": 1,
+                "item_key": f"d{day_index}-cards-1",
+                "type": "flashcard",
+                "kind": "cards",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Kártyák",
+                "estimated_minutes": 4,
+            },
+            {
+                "order_index": 2,
+                "item_key": f"d{day_index}-quiz-1",
+                "type": "quiz",
+                "kind": "quiz",
+                "practice_type": None,
+                "topic": day_title,
+                "label": "Kvíz",
+                "estimated_minutes": 4,
+            },
+            {
+                "order_index": 3,
+                "item_key": f"d{day_index}-translation-1",
+                "type": "translation",
+                "kind": "translation",
+                "practice_type": "translation",
+                "topic": day_title,
+                "label": "Fordítás",
+                "estimated_minutes": 4,
+            },
+            {
+                "order_index": 4,
+                "item_key": f"d{day_index}-roleplay-1",
+                "type": "roleplay",
+                "kind": "roleplay",
+                "practice_type": "roleplay",
+                "topic": day_title,
+                "label": "Párbeszéd",
+                "estimated_minutes": 5,
+            },
+        ]
+
     # Career language track: fixed 5-item structure (25 min)
     if track == "career_language":
         return [
