@@ -1525,14 +1525,25 @@ def _apply_nonlatin_prompt_overrides(
     is_meaning = "meaning:" in topic_lower
 
     if kind == "content" and (is_hook or is_pattern or is_meaning):
-        # Replace the standard language_lesson content spec with nonlatin flow spec
+        # REPLACE the standard language_lesson content spec — remove it from system prompt
+        # so the LLM doesn't see two competing schemas (language_lesson vs language_nonlatin_beginner)
+        if '"content_type": "language_lesson"' in system:
+            import re
+            system = re.sub(
+                r'CONTENT SPEC FOR kind=content:.*?(?=\nLANGUAGE:)',
+                'CONTENT SPEC FOR kind=content:\nSee NON-LATIN BEGINNER MODE below.\n',
+                system,
+                flags=re.DOTALL,
+            )
+
         nonlatin_context = f"""
-🔤 NON-LATIN BEGINNER MODE:
+🔤 NON-LATIN BEGINNER MODE (OVERRIDES ALL PREVIOUS CONTENT SPECS):
 This learner is starting {target_lang} with a NON-LATIN script.
-DO NOT use vocabulary_table, grammar_explanation, or dialogues.
-Instead, return content_type: "language_nonlatin_beginner" with a lesson_flow array.
+DO NOT use vocabulary_table, grammar_explanation, dialogues, or content_type "language_lesson".
+MUST return content_type: "language_nonlatin_beginner" with a lesson_flow array.
 Keep it SHORT, VISUAL, and IMMEDIATE — max 3 new characters per block.
 Instructions in Hungarian, target content in {target_lang}.
+If you return vocabulary_table or content_type "language_lesson", the response will be REJECTED.
 """
         system += nonlatin_context
 
