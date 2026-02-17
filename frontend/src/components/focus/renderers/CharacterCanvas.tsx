@@ -82,7 +82,7 @@ export function CharacterCanvas({ targetGlyph, latinHint, size = 160 }: Characte
     const pos = getPos(e);
     ctx.beginPath();
     ctx.moveTo(pos.x, pos.y);
-    ctx.strokeStyle = "currentColor";
+    ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";

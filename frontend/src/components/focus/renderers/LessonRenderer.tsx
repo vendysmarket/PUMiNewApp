@@ -108,8 +108,8 @@ export function LessonRenderer({ content, onValidationChange }: LessonRendererPr
                   )
                 )}
 
-                {/* Practice items (prompt → answer) */}
-                {flowItem.items && flowItem.items.length > 0 && (
+                {/* Practice items (prompt → answer) — skip for pattern (canvas is enough) */}
+                {flowItem.type !== "pattern" && flowItem.items && flowItem.items.length > 0 && (
                   <div className="space-y-2">
                     {flowItem.items.map((item, ii) => {
                       const key = `flow-${fi}-${ii}`;
