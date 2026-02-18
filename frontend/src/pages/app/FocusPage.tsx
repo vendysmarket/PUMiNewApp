@@ -222,11 +222,25 @@ export default function FocusPage() {
   // ============================================================================
   
   const handleWizardComplete = async (data: WizardData) => {
-    // Check if plan already exists - don't regenerate
+    // Determine the new selection's track
+    const newTrack = data.step2 && "category" in data.step2
+      ? data.step2.category
+      : data.step2 && "track" in data.step2
+        ? data.step2.track
+        : undefined;
+
+    // Check if plan already exists - don't regenerate IF same track
     const existingPlanId = localStorage.getItem("pumi_focus_plan_id");
     if (existingPlanId && planMeta && outline) {
-      setView("outline");
-      return;
+      // Guard: if user selected a different category than active plan, force new plan
+      if (newTrack && planMeta.track && newTrack !== planMeta.track) {
+        console.warn(`[FOCUS] Category mismatch: UI=${newTrack} vs plan=${planMeta.track} — archiving old plan`);
+        await handleArchive();
+        // Fall through to create a new plan
+      } else {
+        setView("outline");
+        return;
+      }
     }
 
     setLoading(true);
@@ -409,6 +423,7 @@ export default function FocusPage() {
         completedDays: [],
         streak: 0,
         archived: false,
+        track: step2Lang?.track || step2Smart?.category,
       });
       setView("outline");
     } catch (err) {
@@ -491,7 +506,7 @@ export default function FocusPage() {
         item_id: itemId,
         status: "done",
         mode,
-        ...(resultJson ? { result_json: resultJson } : {}),
+        result_json: resultJson || { completed: true },
       });
     } catch (err) {
       console.warn("[FOCUS] Item completion backend call failed (non-fatal):", err);
@@ -573,8 +588,13 @@ export default function FocusPage() {
   // ============================================================================
   
   const handleArchive = async () => {
-    // Archive plan in the database
+    // Capture plan ID, then clear it IMMEDIATELY to prevent reuse during async archive
     const planId = localStorage.getItem("pumi_focus_plan_id");
+    localStorage.removeItem("pumi_focus_plan_id");
+    localStorage.removeItem(PLAN_META_KEY);
+    setPlanMeta(null);
+
+    // Archive plan in the database
     if (planId) {
       const mode = outline?.domain === "project" || outline?.focus_type === "project" ? "project" : "learning";
       try {
@@ -584,12 +604,10 @@ export default function FocusPage() {
       }
     }
 
-    // Clear all state
+    // Clear remaining state
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(PLAN_META_KEY);
     localStorage.removeItem(IN_PROGRESS_KEY);
     localStorage.removeItem(COMPLETED_ITEMS_KEY);
-    localStorage.removeItem("pumi_focus_plan_id");
     localStorage.removeItem("pumi_focus_syllabus");
     localStorage.removeItem("pumi_focus_smart_plan");
 
@@ -598,7 +616,6 @@ export default function FocusPage() {
       .filter(k => k.startsWith("pumi_item_") || k.startsWith("focus_item_v5_"))
       .forEach(k => localStorage.removeItem(k));
 
-    setPlanMeta(null);
     setOutline(null);
     setCurrentDay(null);
     setCompletedItemIds([]);

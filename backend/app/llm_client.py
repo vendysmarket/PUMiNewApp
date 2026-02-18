@@ -931,6 +931,32 @@ def _validate_focus_item(item: Dict[str, Any]) -> tuple[bool, str]:
             if not improved:
                 return False, "Feedback must have improved_version"
 
+    elif kind == "smart_lesson":
+        hook = content.get("hook", "")
+        if not hook or len(hook) < 10:
+            return False, "smart_lesson hook too short (min 10 chars)"
+        insight = content.get("insight", "")
+        if not insight or len(insight) < 10:
+            return False, "smart_lesson insight too short (min 10 chars)"
+        for task_key in ("micro_task_1", "micro_task_2"):
+            task = content.get(task_key, {})
+            if not isinstance(task, dict):
+                return False, f"smart_lesson {task_key} must be an object"
+            if not task.get("instruction"):
+                return False, f"smart_lesson {task_key} missing instruction"
+            opts = task.get("options", [])
+            if len(opts) != 3:
+                return False, f"smart_lesson {task_key} must have exactly 3 options, got {len(opts)}"
+            ci = task.get("correct_index")
+            if ci is None or ci < 0 or ci >= len(opts):
+                return False, f"smart_lesson {task_key} has invalid correct_index"
+            if not task.get("explanation"):
+                return False, f"smart_lesson {task_key} missing explanation"
+        # Financial basics: reject generic content
+        is_generic, reason = _is_generic_smart_lesson(content)
+        if is_generic:
+            return False, f"smart_lesson too generic: {reason}"
+
     return True, ""
 
 
@@ -1439,6 +1465,8 @@ Create flashcards from the lesson vocabulary: front = {_chain_lang} word, back =
         system, user = _apply_career_prompt_overrides(kind, system, user, settings)
     elif is_language_domain and _is_nonlatin_language(target_lang_setting):
         system, user = _apply_nonlatin_prompt_overrides(kind, system, user, settings, item_topic)
+    elif kind == "smart_lesson" and domain == "smart_learning":
+        system, user = _apply_smart_learning_prompt_overrides(kind, system, user, settings)
 
     return system, user
 
@@ -1542,6 +1570,106 @@ Corrections should prioritize: register/tone errors > grammar > vocabulary > sty
 """
 
     return system, user
+
+
+def _apply_smart_learning_prompt_overrides(
+    kind: str,
+    system: str,
+    user: str,
+    settings: Optional[Dict[str, Any]] = None,
+) -> tuple[str, str]:
+    """
+    Override prompts for smart_learning track categories.
+    Currently supports: financial_basics.
+    """
+    track = (settings or {}).get("track", "")
+
+    if track == "financial_basics" and kind == "smart_lesson":
+        system += """
+💰 PÉNZÜGYI MIKRO-LECKE MÓD (financial_basics):
+Te egy pénzügyi mikro-mentor vagy Gen-Z stílusban.
+Minden lecke KONKRÉT pénzügyi tudást ad, nem általános tanácsot.
+"""
+        user += """
+FINANCIAL_BASICS MINŐSÉGI KÖVETELMÉNYEK:
+A smart_lesson content-nek KÖTELEZŐEN tartalmaznia kell:
+
+1. hook: Egy konkrét, hétköznapi pénzügyi helyzet vagy kérdés (max 2 mondat).
+   Tartalmazzon SZÁMOT vagy összeget (pl. "200k-ból", "havi 50 ezer", "12%-os").
+
+2. micro_task_1: Gyors számolás VAGY választás KONKRÉT számokkal.
+   - instruction: Tartalmaz számokat és pénzügyi műveletet
+   - options: 3 konkrét, számos válasz (pl. "24 000 Ft", "20 000 Ft", "28 000 Ft")
+   - explanation: Megmutatja a számítás lépéseit (pl. "200 000 × 0.12 = 24 000")
+
+3. micro_task_2: Döntési szcenárió KONKRÉT feltételekkel.
+   - instruction: Valós pénzügyi döntés számokkal (pl. "Van 500k megtakarításod...")
+   - options: 3 konkrét stratégia, mindegyik más eredménnyel
+   - explanation: Megmutatja miért a legjobb (számokkal)
+
+4. insight: 1 mondatos, megjegyezhető szabály SZÁMMAL vagy képlettel.
+   Jó: "Ha a havi törlesztő > fizetésed 30%-a, túl nagy a hitel."
+   Rossz: "Mindig gondold át a döntéseidet." (← TILOS, túl általános!)
+
+TILTÓLISTÁS minták (ha bármelyik megjelenik szám/példa nélkül → ELUTASÍTVA):
+- "mindig spórolj" / "mindig gondold át" → kell mellé konkrét %/összeg
+- "a legjobb módszer" → melyik? számold ki!
+- "érdemes odafigyelni" → mire pontosan? mutasd meg számmal!
+
+KÖTELEZŐ: Minden option és explanation tartalmazzon LEGALÁBB 1 számot.
+"""
+
+    return system, user
+
+
+# ── Generic smart lesson detection ──
+
+# Keywords that signal generic/useless financial advice when no number accompanies them
+_GENERIC_FINANCIAL_KEYWORDS = [
+    "mindig spórolj",
+    "mindig gondold át",
+    "legjobb módszer",
+    "érdemes odafigyelni",
+    "fontos, hogy",
+    "próbálj meg",
+]
+
+def _is_generic_smart_lesson(content: Dict[str, Any]) -> tuple[bool, str]:
+    """
+    Check if a smart_lesson content is too generic (no concrete numbers/examples).
+    Returns (is_generic, reason).
+    """
+    _HAS_NUMBER = re.compile(r'\d')
+
+    def _text_has_number(text: str) -> bool:
+        return bool(_HAS_NUMBER.search(text or ""))
+
+    # Check hook has a number
+    hook = content.get("hook", "")
+    if not _text_has_number(hook):
+        return True, "hook must contain at least one number/amount"
+
+    # Check micro_task options and explanations have numbers
+    for task_key in ("micro_task_1", "micro_task_2"):
+        task = content.get(task_key, {})
+        if not isinstance(task, dict):
+            return True, f"{task_key} must be an object"
+        explanation = task.get("explanation", "")
+        if not _text_has_number(explanation):
+            return True, f"{task_key}.explanation must contain a number"
+        options = task.get("options", [])
+        nums_in_opts = sum(1 for o in options if _text_has_number(str(o)))
+        if nums_in_opts < 2:
+            return True, f"{task_key}.options must have at least 2 options with numbers"
+
+    # Check insight isn't a generic platitude
+    insight = content.get("insight", "")
+    insight_lower = insight.lower()
+    for kw in _GENERIC_FINANCIAL_KEYWORDS:
+        if kw in insight_lower and not _text_has_number(insight):
+            return True, f"insight contains generic phrase '{kw}' without a number"
+
+    return False, ""
 
 
 # ── Non-Latin script detection ──

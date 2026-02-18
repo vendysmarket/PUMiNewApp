@@ -2533,24 +2533,15 @@ async def complete_item(req: CompleteItemReq, request: Request):
     item_type = (item.data.get("type") or "").lower()
     item_kind = (item.data.get("kind") or "").lower()
 
-    # Read-only items (lessons) can be completed without result_json
-    is_read_only = item_type == "lesson" or item_kind == "content"
+    # Read-only items (lessons, briefings, feedback) can be completed without result_json
+    is_read_only = item_type == "lesson" or item_kind in ("content", "briefing", "feedback")
 
     if req.status == "done" and not is_read_only:
 
-        # result_json is required for interactive items
-
+        # Auto-fill missing result_json for backward compatibility
         if not req.result_json:
-
-            raise HTTPException(
-
-                status_code=422,
-
-                detail="Interaction required: result_json is missing"
-
-            )
-
-
+            print(f"[COMPLETE_ITEM] result_json missing for item_id={req.item_id} kind={item_kind} — auto-filling default")
+            req.result_json = {"completed": True}
 
         practice_type = (item.data.get("practice_type") or "").lower()
 
@@ -3369,6 +3360,10 @@ async def generate_item_content(req: GenerateItemContentReq, request: Request):
     content_depth = item.get("content_depth")
     if content_depth:
         plan_settings["content_depth"] = content_depth
+
+    # Log if smart_learning plan is missing track (diagnostic for category mismatch bugs)
+    if (domain or "").lower() == "smart_learning" and not plan_settings.get("track"):
+        print(f"[generate-item-content] WARNING: smart_learning plan {plan.get('id')} has no track in settings — content will use generic prompt")
 
     is_language_domain = (domain or "").lower() in ("language_learning", "language")
 

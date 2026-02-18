@@ -87,4 +87,6 @@ export interface FocusPlanMeta {
   completedDays: number[];
   streak: number;
   archived: boolean;
+  /** Smart learning category or language track — single source of truth */
+  track?: string;
 }
