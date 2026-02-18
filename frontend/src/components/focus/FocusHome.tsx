@@ -1,7 +1,7 @@
 // src/components/focus/FocusHome.tsx
 // Focus Home with 3 states: No active focus, Active plan, In-progress day
 
-import { Sparkles, Play, Flame, MoreHorizontal, BarChart3, List, Plus, BookOpen, Target, Lightbulb, Calendar, TrendingUp, CheckCircle2, Clock } from "lucide-react";
+import { Sparkles, Play, Flame, MoreHorizontal, BarChart3, List, Plus, BookOpen, Target, Lightbulb, Calendar, TrendingUp, CheckCircle2, Clock, Volume2 } from "lucide-react";
 import { FocusPlanMeta } from "@/types/focusWizard";
 import pumiLogo from "@/assets/pumi-logo.png";
 
@@ -15,6 +15,7 @@ interface FocusHomeProps {
   onViewOutline: () => void;
   onViewProgress: () => void;
   onNewPlan: () => void;
+  onStartAudioTutor?: () => void;
 }
 
 export function FocusHome({
@@ -27,6 +28,7 @@ export function FocusHome({
   onViewOutline,
   onViewProgress,
   onNewPlan,
+  onStartAudioTutor,
 }: FocusHomeProps) {
   // ============================================================================
   // STATE 1: No active focus
@@ -203,7 +205,7 @@ export function FocusHome({
         </div>
 
         {/* Secondary Actions */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-3 mb-6">
           <button
             onClick={onViewOutline}
             className="py-3 px-4 rounded-xl text-sm
@@ -226,6 +228,19 @@ export function FocusHome({
             <BarChart3 className="w-4 h-4" />
             Haladás
           </button>
+          {onStartAudioTutor && (
+            <button
+              onClick={onStartAudioTutor}
+              className="py-3 px-4 rounded-xl text-sm
+                       bg-secondary/50 border border-border/50
+                       hover:bg-secondary hover:border-foreground/30
+                       transition-all duration-200
+                       flex items-center justify-center gap-2"
+            >
+              <Volume2 className="w-4 h-4" />
+              Audio
+            </button>
+          )}
         </div>
       </div>
 

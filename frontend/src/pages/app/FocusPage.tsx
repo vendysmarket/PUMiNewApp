@@ -10,6 +10,7 @@ import { FocusOutlineView } from "@/components/focus/FocusOutlineView";
 import { FocusDayView } from "@/components/focus/FocusDayView";
 import { FocusProgress } from "@/components/focus/FocusProgress";
 import { ArchiveModal } from "@/components/focus/ArchiveModal";
+import { AudioTutorSession } from "@/components/focus/AudioTutorSession";
 import { WizardData, FocusPlanMeta, FocusType } from "@/types/focusWizard";
 import type { FocusOutline, PlanDay } from "@/types/learningFocus";
 import { focusApi } from "@/lib/focusApi";
@@ -73,7 +74,7 @@ const COMPLETED_ITEMS_KEY = "pumi_focus_completed_items";
 // Types
 // ============================================================================
 
-type ViewState = "home" | "wizard" | "outline" | "day" | "progress";
+type ViewState = "home" | "wizard" | "outline" | "day" | "progress" | "audio_tutor";
 
 interface SessionData {
   outline: FocusOutline | null;
@@ -662,6 +663,7 @@ export default function FocusPage() {
           onViewOutline={() => setView("outline")}
           onViewProgress={() => setView("progress")}
           onNewPlan={() => setShowArchiveModal(true)}
+          onStartAudioTutor={planMeta ? () => setView("audio_tutor") : undefined}
         />
       )}
       
@@ -716,7 +718,15 @@ export default function FocusPage() {
           onBack={() => setView("home")}
         />
       )}
-      
+
+      {view === "audio_tutor" && planMeta && (
+        <AudioTutorSession
+          track={planMeta.track || planMeta.focusType}
+          level="beginner"
+          onBack={() => setView("home")}
+        />
+      )}
+
       {/* Error display */}
       {error && (
         <div className="fixed bottom-20 left-4 right-4 md:left-auto md:right-4 md:w-96 p-4 rounded-xl bg-destructive/90 text-white text-sm animate-fade-in z-50">

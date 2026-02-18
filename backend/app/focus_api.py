@@ -4478,6 +4478,201 @@ async def generate_outline(req: OutlineRequest):
         )
 
 
+# ============================================================================
+# AUDIO TUTOR - TTS Proxy + Lesson Generation
+# ============================================================================
+
+import time as _time
+import hashlib as _hashlib
+import httpx
+
+# In-memory TTS rate limiting
+_tts_rate_limits: Dict[str, list] = {}
+_TTS_MAX_PER_HOUR = 30
+
+ELEVENLABS_API_KEY = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+ELEVENLABS_VOICE_DEFAULT = (os.getenv("ELEVENLABS_VOICE_ID_DEFAULT") or "21m00Tcm4TlvDq8ikWAM").strip()
+ELEVENLABS_MODEL_DEFAULT = (os.getenv("ELEVENLABS_MODEL_ID_DEFAULT") or "eleven_multilingual_v2").strip()
+
+
+def _check_tts_rate_limit(user_id: str) -> bool:
+    now = _time.time()
+    window = _tts_rate_limits.get(user_id, [])
+    window = [t for t in window if now - t < 3600]
+    _tts_rate_limits[user_id] = window
+    return len(window) < _TTS_MAX_PER_HOUR
+
+
+def _record_tts_request(user_id: str):
+    _tts_rate_limits.setdefault(user_id, []).append(_time.time())
+
+
+class TtsReq(BaseModel):
+    text: str
+    voice_id: Optional[str] = None
+    model_id: Optional[str] = None
+
+
+@router.post("/tts")
+async def tts_proxy(req: TtsReq, request: Request):
+    """ElevenLabs TTS proxy — returns base64-encoded audio."""
+    uid = await get_user_id(request)
+
+    if not ELEVENLABS_API_KEY:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "TTS not configured"})
+
+    # Validate
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(422, "Text is required")
+    if len(text) > 1500:
+        raise HTTPException(422, f"Text too long: {len(text)} chars (max 1500)")
+
+    # Rate limit
+    if not _check_tts_rate_limit(uid):
+        return JSONResponse(status_code=429, content={"ok": False, "error": "Rate limit exceeded (30/hour)"})
+
+    voice_id = req.voice_id or ELEVENLABS_VOICE_DEFAULT
+    model_id = req.model_id or ELEVENLABS_MODEL_DEFAULT
+
+    print(f"[TTS] user={uid[:8]}... voice={voice_id} chars={len(text)}")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Content-Type": "application/json",
+                    "Accept": "audio/mpeg",
+                },
+                json={
+                    "text": text,
+                    "model_id": model_id,
+                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                },
+            )
+
+        if resp.status_code != 200:
+            print(f"[TTS] ElevenLabs error: {resp.status_code}")
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": f"ElevenLabs returned {resp.status_code}"}
+            )
+
+        _record_tts_request(uid)
+        audio_b64 = base64.b64encode(resp.content).decode("ascii")
+
+        return {"ok": True, "audio_base64": audio_b64, "content_type": "audio/mpeg"}
+
+    except httpx.TimeoutException:
+        return JSONResponse(status_code=504, content={"ok": False, "error": "TTS request timed out"})
+    except Exception as e:
+        print(f"[TTS] Error: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": "TTS generation failed"})
+
+
+class AudioLessonReq(BaseModel):
+    track: str  # e.g. "english", "financial_basics", "digital_literacy"
+    level: Optional[str] = "beginner"
+
+
+# Hardcoded fallback lessons per track
+_AUDIO_LESSON_FALLBACKS: Dict[str, Dict[str, Any]] = {
+    "financial_basics": {
+        "title": "Pénzügyi alapok: Mi az a kamat?",
+        "steps": [
+            {"id": "s1", "kind": "explain", "text": "A kamat az a díj, amit a pénz használatáért fizetünk vagy kapunk. Ha beteszed a pénzed a bankba, a bank fizet neked kamatot, mert ő használhatja a pénzedet."},
+            {"id": "s2", "kind": "explain", "text": "Kétféle kamat létezik: egyszerű kamat és kamatos kamat. Egyszerű kamatnál mindig az eredeti összeg után kapsz kamatot. Kamatos kamatnál a kamat is kamatozik."},
+            {"id": "s3", "kind": "prompt", "text": "Gondolj bele: ha beteszel 100 ezer forintot 10 százalékos kamatra, egy év múlva 110 ezred lesz. De kamatos kamattal két év múlva nem 120 ezer, hanem 121 ezer, mert a második évben már a 110 ezer kamatozik."},
+            {"id": "s4", "kind": "recap", "text": "Összefoglalva: a kamat a pénz ára. Kamatos kamatnál a pénzed gyorsabban nő, mint gondolnád. Ezért érdemes minél korábban elkezdeni megtakarítani."},
+        ],
+        "closing": "Ma megtanultad, mi a kamat és miért fontos a kamatos kamat. Holnap tovább haladunk!",
+    },
+    "default": {
+        "title": "Mai mikro-lecke",
+        "steps": [
+            {"id": "s1", "kind": "explain", "text": "Üdvözöllek a mai leckében! Ma egy fontos alapfogalmat fogunk átnézni röviden és érthetően."},
+            {"id": "s2", "kind": "explain", "text": "Minden új fogalmat egyszerű példákon keresztül mutatunk be, hogy könnyen megjegyezhesd."},
+            {"id": "s3", "kind": "prompt", "text": "Gondolkodj el azon, hogyan tudnád a mindennapjaidban alkalmazni, amit most tanultál."},
+            {"id": "s4", "kind": "recap", "text": "Remek munka! A mai legfontosabb tanulság: a kis lépések hosszú távon nagy eredményt hoznak."},
+        ],
+        "closing": "Ma egy újabb lépést tettél. Holnap folytatjuk!",
+    },
+}
+
+
+@router.post("/audio-lesson")
+async def generate_audio_lesson(req: AudioLessonReq, request: Request):
+    """Generate a structured audio lesson with 4-6 steps."""
+    uid = await get_user_id(request)
+    track = (req.track or "").strip()
+    level = (req.level or "beginner").strip()
+
+    print(f"[AUDIO_LESSON] user={uid[:8]}... track={track} level={level}")
+
+    # Try LLM generation
+    if claude:
+        try:
+            system_prompt = """You are an audio tutor creating a short spoken lesson in Hungarian.
+Output ONLY valid JSON, no markdown, no extra text.
+The lesson should feel like a friendly tutor speaking directly to the student."""
+
+            user_prompt = f"""Generate a micro-lesson for track "{track}" at level "{level}".
+
+Return this exact JSON structure:
+{{
+  "title": "Lesson title in Hungarian (max 8 words)",
+  "steps": [
+    {{"id": "s1", "kind": "explain", "text": "First explain the core concept in 2-3 simple sentences. Define any new terms."}},
+    {{"id": "s2", "kind": "explain", "text": "Give a concrete example with numbers or a real scenario."}},
+    {{"id": "s3", "kind": "prompt", "text": "Ask the listener to think about something related. Start with 'Gondolj bele:' or 'Képzeld el:'"}},
+    {{"id": "s4", "kind": "recap", "text": "Summarize the key takeaway in 1-2 sentences. Start with 'Összefoglalva:'"}},
+  ],
+  "closing": "Short motivational closing sentence."
+}}
+
+Rules:
+- Hungarian language, simple sentences
+- Each step text: 1-3 sentences, max 200 characters
+- Explain new terms as if the listener has never heard them
+- Use concrete numbers and examples, not generic advice
+- The lesson should teach ONE micro-concept
+- Kind "explain" = teaching, "prompt" = thinking exercise, "recap" = summary"""
+
+            msg = claude.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=800,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+
+            raw = msg.content[0].text.strip()
+            # Extract JSON
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end > start:
+                parsed = json.loads(raw[start:end + 1])
+                if parsed.get("steps") and len(parsed["steps"]) >= 3:
+                    # Ensure all steps have required fields
+                    for i, step in enumerate(parsed["steps"]):
+                        if not step.get("id"):
+                            step["id"] = f"s{i+1}"
+                        if not step.get("kind"):
+                            step["kind"] = "explain"
+                    return {
+                        "ok": True,
+                        "title": parsed.get("title", "Mai lecke"),
+                        "steps": parsed["steps"],
+                        "closing": parsed.get("closing", "Szép munka, holnap folytatjuk!"),
+                    }
+
+        except Exception as e:
+            print(f"[AUDIO_LESSON] LLM generation failed: {e}")
+
+    # Fallback to hardcoded lessons
+    fallback = _AUDIO_LESSON_FALLBACKS.get(track, _AUDIO_LESSON_FALLBACKS["default"])
+    return {"ok": True, **fallback}
 
 
 
