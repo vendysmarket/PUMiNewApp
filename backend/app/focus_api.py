@@ -4675,6 +4675,80 @@ Rules:
     return {"ok": True, **fallback}
 
 
+# ── Audio Chat ──────────────────────────────────────────────────────────────
+
+class AudioChatReq(BaseModel):
+    session_id: str
+    step_id: str
+    user_text: str
+    lesson_md: str               # short excerpt of current lesson
+    mode: str                    # "intro" | "practice"
+    target_language: Optional[str] = None
+    level: Optional[str] = None
+    user_name: Optional[str] = None
+
+    model_config = {"protected_namespaces": ()}
+
+
+@router.post("/audio-chat")
+async def audio_chat(req: AudioChatReq, request: Request):
+    """Short, context-bound chat reply for the Audio Day session.
+
+    Strictly scoped to the current lesson content — the system prompt
+    forbids introducing topics outside lesson_md.
+    """
+    uid = await get_user_id(request)
+
+    user_text = (req.user_text or "").strip()
+    if not user_text:
+        raise HTTPException(422, "user_text is required")
+    if len(user_text) > 500:
+        raise HTTPException(422, "user_text too long (max 500 chars)")
+
+    # Truncate lesson_md to keep token usage low
+    lesson_excerpt = (req.lesson_md or "")[:2000]
+    mode = req.mode or "intro"
+    level = req.level or "beginner"
+    lang = req.target_language or "hu"
+    name = req.user_name or "Tanuló"
+
+    system_prompt = f"""Te PUMi vagy, egy barátságos magyar nyelvű audio tutor.
+
+JELENLEGI LECKE KONTEXTUS:
+{lesson_excerpt}
+
+SZABÁLYOK:
+- CSAK a fenti lecke tartalomról beszélhetsz. Semmilyen más témát NE vezess be.
+- Maximum 3 mondatban válaszolj.
+- Ha a tanuló off-topic kérdést tesz fel, udvariasan tereld vissza a leckéhez.
+- A tanuló neve: {name}. Szint: {level}. Nyelv: {lang}.
+- Jelenlegi mód: {mode}.
+- Ha a mód "intro": légy barátságos, motiváló. Kérdezd meg kész-e tanulni.
+- Ha a mód "practice": segíts a feladat megoldásában, adj tippeket, de NE mondd meg a választ közvetlenül.
+"""
+
+    if not claude:
+        return {"ok": True, "reply": "Sajnos most nem tudok válaszolni. Próbáld újra később!"}
+
+    try:
+        msg = claude.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=300,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_text}],
+        )
+        reply = msg.content[0].text.strip()
+        # Hard cap: max 3 sentences
+        sentences = reply.split(". ")
+        if len(sentences) > 3:
+            reply = ". ".join(sentences[:3]) + "."
+        print(f"[AUDIO_CHAT] uid={uid[:8]}... mode={mode} step={req.step_id}")
+        return {"ok": True, "reply": reply}
+    except Exception as e:
+        print(f"[AUDIO_CHAT] Error: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": "Chat válasz sikertelen"})
+
+
 
 
 

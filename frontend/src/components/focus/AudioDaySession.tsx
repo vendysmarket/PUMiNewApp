@@ -10,6 +10,7 @@ import {
   BookOpen, Play, StopCircle, Calendar, Flame, Target,
 } from "lucide-react";
 import { LazyItemRenderer } from "@/components/focus/LazyItemRenderer";
+import { AudioChatPanel, type ChatMessage } from "@/components/focus/AudioChatPanel";
 import { focusApi } from "@/lib/focusApi";
 import { validateFocusItem } from "@/lib/focusItemValidator";
 import { lessonToScript } from "@/lib/lessonToScript";
@@ -19,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 
 const AGENT_ID = "agent_4001khrwb3tcfsqtr0sjjfd8e5qj";
 const NOTES_STORAGE_KEY = "pumi_audio_day_notes";
+const CHAT_STORAGE_PREFIX = "pumi_audio_chat_";
 
 type SessionPhase = "loading" | "intro" | "lesson" | "practice" | "summary";
 
@@ -59,6 +61,18 @@ export function AudioDaySession({
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [micEnabled, setMicEnabled] = useState(true);
   const [agentError, setAgentError] = useState<string | null>(null);
+
+  // ── Chat state ──
+  const sessionId = useRef(
+    `audio_${currentDay.title?.replace(/\s/g, "_")}_${dayIndex}_${Date.now()}`
+  ).current;
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const stored = localStorage.getItem(CHAT_STORAGE_PREFIX + sessionId);
+      if (stored) return JSON.parse(stored);
+    } catch { /* ignore */ }
+    return [];
+  });
 
   // Items split: first "lesson"/"smart_lesson" is the lesson, rest are practice
   const items = currentDay.items || [];
@@ -295,6 +309,63 @@ export function AudioDaySession({
       setPhase("summary");
     }
   }, [phase, handleLessonEnd]);
+
+  // ── Persist chat messages ──
+  const handleChatMessagesChange = useCallback((msgs: ChatMessage[]) => {
+    setChatMessages(msgs);
+    try {
+      localStorage.setItem(CHAT_STORAGE_PREFIX + sessionId, JSON.stringify(msgs.slice(-50)));
+    } catch { /* quota exceeded — ignore */ }
+  }, [sessionId]);
+
+  // ── Chat command handler ──
+  const handleChatCommand = useCallback((cmd: "start" | "next" | "repeat" | "help" | "end" | "pause" | "resume") => {
+    switch (cmd) {
+      case "start":
+        if (phase === "intro") {
+          // Transition to lesson
+          setPhase("lesson");
+          toggleMic(false);
+        }
+        break;
+      case "next":
+        handleSkipToNextPhase();
+        break;
+      case "repeat":
+        // For now, just add an AI message acknowledging
+        handleChatMessagesChange([
+          ...chatMessages,
+          { id: `sys-${Date.now()}`, source: "ai", text: "Rendben, nézzük újra az aktuális részt!", ts: Date.now() },
+        ]);
+        break;
+      case "help":
+        handleChatMessagesChange([
+          ...chatMessages,
+          { id: `sys-${Date.now()}`, source: "ai", text: "Használd a \"Következő\" gombot a továbblépéshez, vagy írd le a kérdésed a lecke tartalmával kapcsolatban!", ts: Date.now() },
+        ]);
+        break;
+      case "end":
+        if (phase === "summary") {
+          onCompleteDay();
+        } else {
+          handleSkipToNextPhase();
+        }
+        break;
+      case "pause":
+        // Pause audio agent if connected
+        if (conversation.status === "connected") {
+          conversation.endSession().catch(() => {});
+        }
+        break;
+      case "resume":
+        // Resume not supported after end — just notify
+        handleChatMessagesChange([
+          ...chatMessages,
+          { id: `sys-${Date.now()}`, source: "ai", text: "A lecke folytatásához nyomd meg a lejátszás gombot!", ts: Date.now() },
+        ]);
+        break;
+    }
+  }, [phase, chatMessages, handleChatMessagesChange, handleSkipToNextPhase, toggleMic, conversation, onCompleteDay]);
 
   // ── Cleanup on unmount ──
   useEffect(() => {
@@ -577,6 +648,24 @@ export function AudioDaySession({
               </div>
             </details>
           )}
+        </div>
+      )}
+
+      {/* ── Chat Panel (visible in all phases except loading) ── */}
+      {phase !== "loading" && (
+        <div className="mt-6">
+          <AudioChatPanel
+            phase={phase}
+            sessionId={sessionId}
+            stepId={lessonItemRaw?.id || `day-${dayIndex}`}
+            lessonMd={lessonScript}
+            targetLanguage={outline.lang}
+            level={outline.level}
+            userName="Tanuló"
+            messages={chatMessages}
+            onMessagesChange={handleChatMessagesChange}
+            onCommand={handleChatCommand}
+          />
         </div>
       )}
 

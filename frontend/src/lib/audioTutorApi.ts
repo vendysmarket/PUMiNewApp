@@ -19,10 +19,30 @@ interface TtsResp {
   error?: string;
 }
 
+interface AudioChatResp {
+  ok: boolean;
+  reply: string;
+  error?: string;
+}
+
+export interface AudioChatPayload {
+  session_id: string;
+  step_id: string;
+  user_text: string;
+  lesson_md: string;
+  mode: "intro" | "practice";
+  target_language?: string;
+  level?: string;
+  user_name?: string;
+}
+
 export const audioTutorApi = {
   generateLesson: (payload: { track: string; level?: string }) =>
     pumiInvoke<AudioLessonResp>("/focus/audio-lesson", payload),
 
   generateTts: (payload: { text: string; voice_id?: string; model_id?: string }) =>
     pumiInvoke<TtsResp>("/focus/tts", payload),
+
+  chat: (payload: AudioChatPayload) =>
+    pumiInvoke<AudioChatResp>("/focus/audio-chat", payload),
 };
