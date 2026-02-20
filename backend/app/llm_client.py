@@ -1943,6 +1943,7 @@ async def generate_focus_item(
     retry_count: int = 0,
     settings: Optional[Dict[str, Any]] = None,
     preceding_lesson_content: Optional[str] = None,
+    max_retries: int = 2,
 ) -> Dict[str, Any]:
     """
     Generate a single focus item with the canonical schema.
@@ -2076,7 +2077,7 @@ async def generate_focus_item(
     data = _extract_json_object(s)
 
     if not data:
-        if retry_count < 2:
+        if retry_count < max_retries:
             print(f"[FOCUS_ITEM] JSON parse failed (retry {retry_count}), response: {text[:300]}")
             return await generate_focus_item(
                 item_type=item_type,
@@ -2092,6 +2093,7 @@ async def generate_focus_item(
                 retry_count=retry_count + 1,
                 settings=settings,
                 preceding_lesson_content=preceding_lesson_content,
+                max_retries=max_retries,
             )
         # Return fallback item
         fallback = _create_fallback_item(kind, topic, label, lang, minutes, domain=domain)
@@ -2114,8 +2116,8 @@ async def generate_focus_item(
     # Validate
     is_valid, error = _validate_focus_item(data)
     if not is_valid:
-        print(f"[FOCUS_ITEM] Validation failed (retry {retry_count}): {error} | kind={kind} domain={domain}")
-        if retry_count < 2:
+        print(f"[FOCUS_ITEM] Validation failed (retry {retry_count}, max={max_retries}): {error} | kind={kind} domain={domain}")
+        if retry_count < max_retries:
             # Retry with fix instruction
             return await generate_focus_item(
                 item_type=item_type,
@@ -2131,6 +2133,7 @@ async def generate_focus_item(
                 retry_count=retry_count + 1,
                 settings=settings,
                 preceding_lesson_content=preceding_lesson_content,
+                max_retries=max_retries,
             )
         # Return fallback after all retries exhausted
         print(f"[FOCUS_ITEM] FALLBACK for {kind}/{domain}/{topic[:50]} after {retry_count+1} attempts")
@@ -2141,7 +2144,7 @@ async def generate_focus_item(
 
     # Non-Latin script validation: detect if vocabulary/content is in wrong script (ASCII instead of native)
     _resolved_target = _resolve_target_language(settings or {}, day_title, user_goal)
-    if _resolved_target and _is_nonlatin_language(_resolved_target) and kind == "content" and retry_count < 1:
+    if _resolved_target and _is_nonlatin_language(_resolved_target) and kind == "content" and retry_count < min(1, max_retries):
         content_data = data.get("content", {})
         # Check vocabulary_table words
         vocab = content_data.get("vocabulary_table", [])
@@ -2156,6 +2159,7 @@ async def generate_focus_item(
                     minutes=minutes, user_goal=user_goal,
                     retry_count=retry_count + 1, settings=settings,
                     preceding_lesson_content=preceding_lesson_content,
+                    max_retries=max_retries,
                 )
         # Check lesson_flow glyphs
         flow = content_data.get("lesson_flow", [])
@@ -2173,6 +2177,7 @@ async def generate_focus_item(
                             minutes=minutes, user_goal=user_goal,
                             retry_count=retry_count + 1, settings=settings,
                             preceding_lesson_content=preceding_lesson_content,
+                            max_retries=max_retries,
                         )
 
     return data

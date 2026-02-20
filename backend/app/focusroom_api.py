@@ -10,6 +10,7 @@ Backend handles: plan generation, content generation, answer evaluation, TTS.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -188,7 +189,14 @@ async def start_day(req: StartDayReq, request: Request):
     - lesson_md: full lesson as markdown (for canvas/notes)
     - script_steps: what the tutor says step-by-step (for TTS)
     - tasks: practice items with content (for Task phase)
+
+    Performance: max_retries=0 → single LLM attempt per item, fallback on failure.
+    Lesson first (sequential), practice items in parallel.
+    Target: <15s total.
     """
+    import time
+    t0 = time.monotonic()
+
     uid = await get_user_id(request)
 
     if not LLM_AVAILABLE:
@@ -201,61 +209,76 @@ async def start_day(req: StartDayReq, request: Request):
     minutes = req.minutes_per_day or 20
 
     templates = LANGUAGE_DAY_ITEMS if domain == "language" else SMART_DAY_ITEMS
+    per_item_minutes = max(3, minutes // len(templates))
 
-    tasks = []
+    # FocusRoom MVP: no retries — single attempt, fallback on failure
+    ROOM_MAX_RETRIES = 0
+
+    # ── Phase 1: Generate lesson FIRST (practice items chain from it) ──
+    lesson_tmpl = templates[0]  # always lesson or smart_lesson
     lesson_md = ""
     lesson_content_raw = {}
 
-    for idx, tmpl in enumerate(templates):
+    try:
+        lesson_result = await generate_focus_item(
+            item_type=lesson_tmpl["kind"],
+            practice_type=None,
+            topic=day_title,
+            label=lesson_tmpl["label"],
+            day_title=day_title,
+            domain=domain,
+            level=level,
+            lang=target_lang or "hu",
+            minutes=per_item_minutes,
+            user_goal=day_title,
+            settings={"tone": "casual", "difficulty": "normal"},
+            preceding_lesson_content=None,
+            max_retries=ROOM_MAX_RETRIES,
+        )
+        if lesson_result:
+            lesson_md = _build_lesson_md(lesson_result)
+            lesson_content_raw = lesson_result
+    except Exception as e:
+        print(f"[focusroom/day/start] Lesson generation failed: {e}")
+
+    t_lesson = time.monotonic()
+    print(f"[focusroom/day/start] Lesson done in {t_lesson - t0:.1f}s")
+
+    # ── Phase 2: Generate practice items IN PARALLEL ──
+    practice_templates = templates[1:]
+
+    async def gen_task(idx: int, tmpl: Dict[str, str]) -> Dict[str, Any]:
         item_id = f"room-{req.room_id[:8]}-d{req.day_index}-{tmpl['kind']}-{idx}"
         kind = tmpl["kind"]
-
         try:
-            item_type = kind
-            practice_type = None
-            if kind in ("quiz", "translation", "writing", "cards", "roleplay"):
-                practice_type = kind
-
-            preceding = lesson_md if (kind != "lesson" and kind != "smart_lesson" and lesson_md) else None
-
             result = await generate_focus_item(
-                item_type=item_type,
-                practice_type=practice_type,
+                item_type=kind,
+                practice_type=kind,
                 topic=day_title,
                 label=tmpl["label"],
                 day_title=day_title,
                 domain=domain,
                 level=level,
                 lang=target_lang or "hu",
-                minutes=max(3, minutes // len(templates)),
+                minutes=per_item_minutes,
                 user_goal=day_title,
                 settings={"tone": "casual", "difficulty": "normal"},
-                preceding_lesson_content=preceding,
+                preceding_lesson_content=lesson_md or None,
+                max_retries=ROOM_MAX_RETRIES,
             )
-
-            if kind in ("lesson", "smart_lesson") and result:
-                lesson_md = _build_lesson_md(result)
-                lesson_content_raw = result
-            else:
-                tasks.append({
-                    "id": item_id,
-                    "kind": kind,
-                    "title": tmpl["label"],
-                    "content": result,
-                })
-
+            return {"id": item_id, "kind": kind, "title": tmpl["label"], "content": result}
         except Exception as e:
-            print(f"[focusroom/day/start] Item generation failed ({kind}): {e}")
-            if kind not in ("lesson", "smart_lesson"):
-                tasks.append({
-                    "id": item_id,
-                    "kind": kind,
-                    "title": tmpl["label"],
-                    "content": _fallback_content(kind),
-                })
+            print(f"[focusroom/day/start] Task generation failed ({kind}): {e}")
+            return {"id": item_id, "kind": kind, "title": tmpl["label"], "content": _fallback_content(kind)}
+
+    tasks = list(await asyncio.gather(*[
+        gen_task(i, t) for i, t in enumerate(practice_templates, 1)
+    ]))
+
+    t_end = time.monotonic()
+    print(f"[focusroom/day/start] Tasks done in {t_end - t_lesson:.1f}s | TOTAL: {t_end - t0:.1f}s | domain={domain} day={req.day_index}")
 
     # Build script_steps from lesson content
-    # These are what the tutor says, step by step
     script_steps = _build_script_steps(lesson_content_raw, day_title)
 
     return {
