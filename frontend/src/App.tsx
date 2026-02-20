@@ -7,6 +7,7 @@ import AppLayout from "./layouts/AppLayout";
 import ChatPageLegacy from "./pages/app/ChatPageLegacy";
 import NewChatPage from "./pages/app/NewChatPage";
 import FocusPage from "./pages/app/FocusPage";
+import FocusRoomPage from "./pages/app/FocusRoomPage";
 import FilesPage from "./pages/app/FilesPage";
 import ProfilePage from "./pages/app/ProfilePage";
 import SettingsPage from "./pages/app/SettingsPage";
@@ -48,6 +49,7 @@ const App = () => (
               {/* Protected route - requires paid tier */}
               <Route element={<RequirePaid />}>
                 <Route path="focus" element={<FocusPage />} />
+                <Route path="focusroom" element={<FocusRoomPage />} />
               </Route>
               
               <Route path="files" element={<FilesPage />} />

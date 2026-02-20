@@ -27,13 +27,13 @@ const MobileBottomNav = () => {
     { 
       icon: Sparkles, 
       label: "Fókusz", 
-      route: "/app/focus",
+      route: "/app/focusroom",
     },
   ];
 
   const handleNavClick = (route: string) => {
     // If focus is in progress and trying to navigate away from focus page
-    if (focusInProgress && route !== "/app/focus" && location.pathname === "/app/focus") {
+    if (focusInProgress && route !== "/app/focus" && (location.pathname === "/app/focus" || location.pathname === "/app/focusroom")) {
       toast({
         title: "Fókusz fut",
         description: "Állítsd le vagy fejezd be a szakaszt a kilépéshez.",
@@ -49,10 +49,10 @@ const MobileBottomNav = () => {
       {navItems.map((item) => {
         const Icon = item.icon;
         const active = isActive(item.route);
-        const isFocusItem = item.route === "/app/focus";
+        const isFocusItem = item.route === "/app/focusroom";
         
         // Lock non-focus items when focus is in progress
-        const isLocked = focusInProgress && !isFocusItem && location.pathname === "/app/focus";
+        const isLocked = focusInProgress && !isFocusItem && (location.pathname === "/app/focus" || location.pathname === "/app/focusroom");
 
         return (
           <button

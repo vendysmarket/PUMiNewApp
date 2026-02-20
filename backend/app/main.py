@@ -58,6 +58,7 @@ from .summarize import router as summarize_router
 from .billing import router as billing_router
 from .webhooks import router as webhooks_router  # <-- IMPORTANT
 from .focus_api import router as focus_router
+from .focusroom_api import router as focusroom_router
 from .account import router as account_router
 
 app.include_router(chat_enhanced_router)
@@ -67,6 +68,7 @@ app.include_router(summarize_router)
 app.include_router(billing_router)
 app.include_router(webhooks_router)  # <-- IMPORTANT
 app.include_router(focus_router)
+app.include_router(focusroom_router)
 app.include_router(account_router)
 
 @app.get("/healthz", response_model=HealthOutput)

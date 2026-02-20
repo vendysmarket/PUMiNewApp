@@ -4,14 +4,16 @@
 import { useState, useEffect } from "react";
 
 const IN_PROGRESS_KEY = "pumi_focus_in_progress";
+const FOCUSROOM_PROGRESS_KEY = "pumi_focusroom_in_progress";
 
 export function useFocusInProgress() {
   const [inProgress, setInProgress] = useState(false);
 
   useEffect(() => {
-    // Initial check
+    // Initial check — either old focus or new focusroom
     const checkProgress = () => {
-      const isInProgress = localStorage.getItem(IN_PROGRESS_KEY) === "1";
+      const isInProgress = localStorage.getItem(IN_PROGRESS_KEY) === "1"
+        || localStorage.getItem(FOCUSROOM_PROGRESS_KEY) === "1";
       setInProgress(isInProgress);
     };
     
@@ -19,8 +21,8 @@ export function useFocusInProgress() {
 
     // Listen for storage changes (from other tabs/components)
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === IN_PROGRESS_KEY) {
-        setInProgress(e.newValue === "1");
+      if (e.key === IN_PROGRESS_KEY || e.key === FOCUSROOM_PROGRESS_KEY) {
+        checkProgress();
       }
     };
 

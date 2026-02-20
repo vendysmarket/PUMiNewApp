@@ -40,7 +40,7 @@ const Sidebar = () => {
     entitlementKey: MenuItemKey;
   }[] = [
     { Icon: MessageSquare, labelKey: "chat", route: "/app/chat", entitlementKey: "chat" },
-    { Icon: Sparkles, labelKey: "focus", route: "/app/focus", entitlementKey: "focus" },
+    { Icon: Sparkles, labelKey: "focus", route: "/app/focusroom", entitlementKey: "focus" },
     { Icon: Archive, labelKey: "files", route: "/app/files", entitlementKey: "files" },
     { Icon: User, labelKey: "profile", route: "/app/profile", entitlementKey: "profile" },
     { Icon: Settings, labelKey: "settings", route: "/app/settings", entitlementKey: "settings" },
@@ -58,7 +58,7 @@ const Sidebar = () => {
 
   // Check if navigation is blocked due to focus in progress
   const isNavBlockedByFocus = (entitlementKey: MenuItemKey): boolean => {
-    return focusInProgress && entitlementKey !== "focus" && location.pathname === "/app/focus";
+    return focusInProgress && entitlementKey !== "focus" && (location.pathname === "/app/focus" || location.pathname === "/app/focusroom");
   };
 
   const handleClick = (route: string, entitlementKey: MenuItemKey) => {
