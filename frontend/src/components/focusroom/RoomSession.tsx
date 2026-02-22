@@ -133,11 +133,20 @@ export function RoomSession({ room, onRoomUpdate, onExit }: RoomSessionProps) {
         startedAt: new Date().toISOString(),
       };
 
-      setSession(newSession);
+      // Safe lesson_md accessor — handles all backend field name variations
+      const rawResp = resp as any;
+      const resolvedMd: string =
+        rawResp.lesson_md ??
+        rawResp.lesson?.body_md ??
+        rawResp.body_md ??
+        rawResp.lesson_text ??
+        "";
+
+      setSession({ ...newSession, lessonMd: resolvedMd });
       setItems(dayItems);
       setScriptSteps(scripts);
       setCurrentScriptIdx(0);
-      setLessonMd(resp.lesson_md || "");
+      setLessonMd(resolvedMd);
       setCurrentItemIdx(0);
       setScoreSum(0);
 
@@ -198,8 +207,11 @@ export function RoomSession({ room, onRoomUpdate, onExit }: RoomSessionProps) {
       case "intro": {
         // Move to teach phase — show lesson notes + start playing script steps
         setPhase("teach");
-        if (lessonMd) {
+        if (lessonMd && lessonMd.trim().length > 0) {
           addStep("lesson_note", lessonMd);
+        } else {
+          // Non-fatal: lesson content missing, but session can continue
+          addStep("tutor", "A lecke tartalma most nem érhető el, de a feladatokkal folytathatod.");
         }
         // Play the next script step
         playNextScript(1); // skip intro (already played)

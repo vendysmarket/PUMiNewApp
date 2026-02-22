@@ -211,8 +211,10 @@ async def start_day(req: StartDayReq, request: Request):
     templates = LANGUAGE_DAY_ITEMS if domain == "language" else SMART_DAY_ITEMS
     per_item_minutes = max(3, minutes // len(templates))
 
-    # FocusRoom MVP: no retries — single attempt, fallback on failure
-    ROOM_MAX_RETRIES = 0
+    # Lesson: up to 2 retries (validation now relaxed, so usually passes on 1st try)
+    # Tasks: 0 retries — fallback immediately to avoid timeout
+    LESSON_MAX_RETRIES = 2
+    TASK_MAX_RETRIES = 0
 
     # ── Phase 1: Generate lesson FIRST (practice items chain from it) ──
     lesson_tmpl = templates[0]  # always lesson or smart_lesson
@@ -233,7 +235,7 @@ async def start_day(req: StartDayReq, request: Request):
             user_goal=day_title,
             settings={"tone": "casual", "difficulty": "normal"},
             preceding_lesson_content=None,
-            max_retries=ROOM_MAX_RETRIES,
+            max_retries=LESSON_MAX_RETRIES,
         )
         if lesson_result:
             lesson_md = _build_lesson_md(lesson_result)
@@ -242,7 +244,7 @@ async def start_day(req: StartDayReq, request: Request):
         print(f"[focusroom/day/start] Lesson generation failed: {e}")
 
     t_lesson = time.monotonic()
-    print(f"[focusroom/day/start] Lesson done in {t_lesson - t0:.1f}s")
+    print(f"[focusroom/day/start] Lesson done in {t_lesson - t0:.1f}s | body_md len={len(lesson_md)}")
 
     # ── Phase 2: Generate practice items IN PARALLEL ──
     practice_templates = templates[1:]
@@ -264,7 +266,7 @@ async def start_day(req: StartDayReq, request: Request):
                 user_goal=day_title,
                 settings={"tone": "casual", "difficulty": "normal"},
                 preceding_lesson_content=lesson_md or None,
-                max_retries=ROOM_MAX_RETRIES,
+                max_retries=TASK_MAX_RETRIES,
             )
             return {"id": item_id, "kind": kind, "title": tmpl["label"], "content": result}
         except Exception as e:
@@ -277,6 +279,11 @@ async def start_day(req: StartDayReq, request: Request):
 
     t_end = time.monotonic()
     print(f"[focusroom/day/start] Tasks done in {t_end - t_lesson:.1f}s | TOTAL: {t_end - t0:.1f}s | domain={domain} day={req.day_index}")
+
+    # Guarantee lesson_md is never empty — last-resort fallback
+    if not lesson_md:
+        lesson_md = f"# {day_title}\n\nA mai lecke tartalma generálás alatt volt. Folytasd a feladatokkal!"
+        print(f"[focusroom/day/start] WARNING: lesson_md was empty, using last-resort fallback")
 
     # Build script_steps from lesson content
     script_steps = _build_script_steps(lesson_content_raw, day_title)
@@ -383,18 +390,48 @@ def _build_script_steps(content: Dict[str, Any], day_title: str) -> List[Dict[st
     return steps
 
 
-def _build_lesson_md(content: Dict[str, Any]) -> str:
-    """Extract markdown text from generated lesson content."""
+def _build_lesson_md(item: Dict[str, Any]) -> str:
+    """
+    Extract markdown text from a generate_focus_item result.
+
+    The LLM result has structure: { "kind": ..., "title": ..., "content": { ... }, ... }
+    Content fields (hook, vocab, grammar etc.) are nested inside item["content"].
+    This function unwraps that and builds human-readable markdown.
+    """
     parts = []
-    title = content.get("title", "")
+
+    # Top-level title (outside content)
+    title = item.get("title") or item.get("subtitle") or ""
     if title:
         parts.append(f"# {title}")
 
-    intro = content.get("introduction") or content.get("summary", "")
-    if intro:
-        parts.append(intro)
+    # Unwrap nested content block — smart_lesson and others nest fields here
+    c = item.get("content") or item  # fallback: treat item itself as content
 
-    vocab = content.get("vocabulary_table") or []
+    # ── smart_lesson fields ──
+    hook = c.get("hook", "")
+    if hook:
+        parts.append(f"\n{hook}")
+
+    for task_key in ("micro_task_1", "micro_task_2"):
+        task = c.get(task_key)
+        if isinstance(task, dict) and task.get("instruction"):
+            opts = task.get("options", [])
+            opts_md = "\n".join(f"  - {o}" for o in opts) if opts else ""
+            parts.append(f"\n**{task['instruction']}**")
+            if opts_md:
+                parts.append(opts_md)
+
+    insight = c.get("insight", "")
+    if insight:
+        parts.append(f"\n**Tanulság:** {insight}")
+
+    # ── language lesson fields ──
+    intro = c.get("introduction") or c.get("summary", "")
+    if intro:
+        parts.append(f"\n{intro}")
+
+    vocab = c.get("vocabulary_table") or []
     if vocab:
         parts.append("\n## Szókincs")
         for v in vocab:
@@ -406,38 +443,41 @@ def _build_lesson_md(content: Dict[str, Any]) -> str:
             if ex:
                 parts.append(f"  _{ex}_ — {v.get('example_translation', '')}")
 
-    grammar = content.get("grammar_explanation")
+    grammar = c.get("grammar_explanation")
     if grammar:
         parts.append(f"\n## Nyelvtan: {grammar.get('rule_title', '')}")
         parts.append(grammar.get("explanation", ""))
         for ex in grammar.get("examples", []):
             parts.append(f"- {ex.get('target', '')} — {ex.get('hungarian', '')}")
 
-    dialogues = content.get("dialogues") or []
+    dialogues = c.get("dialogues") or []
     for d in dialogues:
-        parts.append(f"\n## Párbeszéd: {d.get('title', '')}")
+        parts.append(f"\n## Párbeszéd: {d.get('title', d.get('scene', ''))}")
         for line in d.get("lines", []):
             parts.append(f"**{line.get('speaker', '')}:** {line.get('text', '')} ({line.get('translation', '')})")
 
-    hook = content.get("hook", "")
-    if hook:
-        parts.append(f"\n{hook}")
-    insight = content.get("insight", "")
-    if insight:
-        parts.append(f"\n**Tanulság:** {insight}")
-
-    kps = content.get("key_points") or []
+    # ── shared fields ──
+    kps = c.get("key_points") or []
     if kps:
         parts.append("\n## Kulcspontok")
         for kp in kps:
             parts.append(f"- {kp}")
 
-    flow = content.get("lesson_flow") or []
+    example = c.get("example", "")
+    if example:
+        parts.append(f"\n_{example}_")
+
+    flow = c.get("lesson_flow") or []
     for block in flow:
         parts.append(f"\n## {block.get('title_hu', '')}")
         parts.append(block.get("body_md", ""))
 
-    return "\n".join(parts).strip() or "Lecke tartalom generálás alatt..."
+    # body_md shortcut (some fallbacks use this directly)
+    body_md = c.get("body_md", "")
+    if body_md and not parts:
+        parts.append(body_md)
+
+    return "\n".join(parts).strip()
 
 
 def _fallback_content(kind: str) -> Dict[str, Any]:

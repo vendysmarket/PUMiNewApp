@@ -1661,47 +1661,23 @@ _KNOWN_INSTRUMENTS = [
 
 def _is_generic_smart_lesson(content: Dict[str, Any]) -> tuple[bool, str]:
     """
-    Check if a smart_lesson content is too generic (no concrete numbers/examples).
-    Returns (is_generic, reason).
+    Check if smart_lesson content is a placeholder / completely empty.
+    Relaxed for FocusRoom MVP: only rejects empty or placeholder content.
+    Number/amount requirements removed — Haiku omits them for non-financial topics.
     """
-    _HAS_NUMBER = re.compile(r'\d')
-
-    def _text_has_number(text: str) -> bool:
-        return bool(_HAS_NUMBER.search(text or ""))
-
-    def _has_instrument(text: str) -> bool:
-        t = (text or "").lower()
-        return any(inst in t for inst in _KNOWN_INSTRUMENTS)
-
-    # Check hook has a number
     hook = content.get("hook", "")
-    if not _text_has_number(hook):
-        return True, "hook must contain at least one number/amount"
+    if not hook or len(hook.strip()) < 10:
+        return True, "hook is empty or too short"
 
-    # Check micro_task options and explanations have numbers + instruments
     for task_key in ("micro_task_1", "micro_task_2"):
         task = content.get(task_key, {})
         if not isinstance(task, dict):
             return True, f"{task_key} must be an object"
-        explanation = task.get("explanation", "")
-        if not _text_has_number(explanation):
-            return True, f"{task_key}.explanation must contain a number"
         options = task.get("options", [])
-        nums_in_opts = sum(1 for o in options if _text_has_number(str(o)))
-        if nums_in_opts < 2:
-            return True, f"{task_key}.options must have at least 2 options with numbers"
-        # Check for vague options without concrete instrument
-        all_opts_text = " ".join(str(o).lower() for o in options)
-        for verb in _VAGUE_VERBS:
-            if verb in all_opts_text and not _has_instrument(all_opts_text):
-                return True, f"{task_key}.options contains vague '{verb}' without naming a concrete instrument"
-
-    # Check insight isn't a generic platitude
-    insight = content.get("insight", "")
-    insight_lower = insight.lower()
-    for kw in _GENERIC_FINANCIAL_KEYWORDS:
-        if kw in insight_lower and not _text_has_number(insight):
-            return True, f"insight contains generic phrase '{kw}' without a number"
+        # Reject placeholder options like ["A", "B", "C"] (len <= 3 chars each)
+        real_opts = [o for o in options if isinstance(o, str) and len(o.strip()) > 3]
+        if len(real_opts) < 2:
+            return True, f"{task_key}.options must have at least 2 real options (not placeholders)"
 
     return False, ""
 
@@ -2221,7 +2197,56 @@ def _create_fallback_item(kind: str, topic: str, label: str, lang: str, minutes:
         }
     }
 
-    if kind == "content":
+    if kind == "smart_lesson":
+        # Fallback smart_lesson: real structured content passable to _build_lesson_md
+        base["content"] = {
+            "hook": (
+                f"Ma a(z) **{topic}** témát vesszük át — egy gyors, lényegre törő leckében."
+                if is_hu
+                else f"Today we cover **{topic}** — fast, practical, and straight to the point."
+            ),
+            "micro_task_1": {
+                "instruction": (
+                    f"Melyik állítás írja le legjobban a(z) {topic} lényegét?" if is_hu
+                    else f"Which statement best describes {topic}?"
+                ),
+                "options": [
+                    (f"A(z) {topic} segít konkrét célt és lépéseket meghatározni." if is_hu else f"{topic} helps define clear goals and steps."),
+                    ("Csak általános inspiráció, konkrét lépések nélkül." if is_hu else "Just general inspiration without concrete steps."),
+                    ("Elméleti tudás, amit nem lehet a gyakorlatban alkalmazni." if is_hu else "Pure theory with no practical application."),
+                ],
+                "correct_index": 0,
+                "explanation": (
+                    "A helyes válasz: konkrét cél + lépések = eredmény." if is_hu
+                    else "Correct: clear goal + steps = results."
+                ),
+            },
+            "micro_task_2": {
+                "instruction": (
+                    f"Mikor érdemes a(z) {topic} elvét alkalmazni?" if is_hu
+                    else f"When is it worth applying {topic}?"
+                ),
+                "options": [
+                    ("Ha konkrét, mérhető eredményt szeretnél elérni." if is_hu else "When you want a concrete, measurable outcome."),
+                    ("Ha nincs szükséged semmiféle visszajelzésre." if is_hu else "When you need no feedback at all."),
+                    ("Ha véletlenszerű döntést szeretnél hozni." if is_hu else "When you want to make a random decision."),
+                ],
+                "correct_index": 0,
+                "explanation": (
+                    "Mérhető cél és lépések — ez a kulcs." if is_hu
+                    else "Measurable goal and steps — that is the key."
+                ),
+            },
+            "insight": (
+                f"A(z) {topic} nem rakétatudomány: célt tűzöl ki, lépéseket teszel, és méred az eredményt."
+                if is_hu
+                else f"{topic} is straightforward: set a goal, take steps, measure the result."
+            ),
+        }
+        base["validation"]["require_interaction"] = True
+        base["input"]["type"] = "choice"
+
+    elif kind == "content":
         if is_language_domain:
             base["content"] = {
                 "content_type": "language_lesson",
