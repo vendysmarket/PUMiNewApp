@@ -174,6 +174,7 @@ export interface StartDayResp {
   ok: boolean;
   lesson_md: string;
   script_steps: Array<{ id: string; type: string; text: string }>;
+  tts_script?: string;
   tasks: Array<{
     id: string;
     kind: string;
@@ -212,6 +213,7 @@ export interface EvaluateResp {
 export interface TtsPayload {
   text: string;
   voice_id?: string;
+  locale?: string;
 }
 
 export interface TtsResp {

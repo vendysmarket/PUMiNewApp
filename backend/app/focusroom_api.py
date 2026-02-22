@@ -38,7 +38,21 @@ except Exception as e:
 
 # ElevenLabs TTS
 ELEVENLABS_API_KEY = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID_DEFAULT", "NIS6mYGxVFNZaeq5OSC1")
+# Locale-based voice selection — override via env vars
+# Default voice is a multilingual-capable voice, not András (NIS6mYGxVFNZaeq5OSC1)
+ELEVENLABS_VOICE_HU = os.getenv("ELEVENLABS_VOICE_ID_HU", "pMsXgVXv3BLzUgSXRplE")  # Matilda — clear, natural HU
+ELEVENLABS_VOICE_EN = os.getenv("ELEVENLABS_VOICE_ID_EN", "21m00Tcm4TlvDq8ikWAM")  # Rachel
+ELEVENLABS_VOICE_EL = os.getenv("ELEVENLABS_VOICE_ID_EL", "pMsXgVXv3BLzUgSXRplE")  # fallback to HU voice
+ELEVENLABS_VOICE_DEFAULT = os.getenv("ELEVENLABS_VOICE_ID_DEFAULT", ELEVENLABS_VOICE_HU)
+
+_LOCALE_VOICES: dict[str, str] = {
+    "hu": ELEVENLABS_VOICE_HU,
+    "en": ELEVENLABS_VOICE_EN,
+    "el": ELEVENLABS_VOICE_EL,
+}
+
+def _voice_for_locale(locale: str) -> str:
+    return _LOCALE_VOICES.get((locale or "hu").lower(), ELEVENLABS_VOICE_DEFAULT)
 
 # Auth helper
 try:
@@ -90,6 +104,7 @@ class EvaluateReq(BaseModel):
 class TtsReq(BaseModel):
     text: str
     voice_id: Optional[str] = None
+    locale: Optional[str] = "hu"
     model_config = {"protected_namespaces": ()}
 
 class DayTasksReq(BaseModel):
@@ -256,10 +271,16 @@ async def start_day(req: StartDayReq, request: Request):
 
     script_steps = _build_script_steps(lesson_content_raw, day_title)
 
+    # tts_script: one-shot concatenation of all teach steps (for single TTS call)
+    tts_script = " ".join(
+        s["text"] for s in script_steps if s.get("type") in ("intro", "teach")
+    )
+
     return {
         "ok": True,
         "lesson_md": lesson_md,
         "script_steps": script_steps,
+        "tts_script": tts_script,
         "tasks": [],   # fetched lazily by /day/tasks
     }
 
@@ -722,7 +743,7 @@ async def generate_tts(req: TtsReq, request: Request):
     try:
         import httpx
 
-        voice = req.voice_id or ELEVENLABS_VOICE_ID
+        voice = req.voice_id or _voice_for_locale(req.locale or "hu")
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
 
         async with httpx.AsyncClient(timeout=30.0) as client:

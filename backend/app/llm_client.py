@@ -945,8 +945,8 @@ def _validate_focus_item(item: Dict[str, Any]) -> tuple[bool, str]:
             if not task.get("instruction"):
                 return False, f"smart_lesson {task_key} missing instruction"
             opts = task.get("options", [])
-            if len(opts) != 3:
-                return False, f"smart_lesson {task_key} must have exactly 3 options, got {len(opts)}"
+            if len(opts) < 2 or len(opts) > 4:
+                return False, f"smart_lesson {task_key} must have 2-4 options, got {len(opts)}"
             ci = task.get("correct_index")
             if ci is None or ci < 0 or ci >= len(opts):
                 return False, f"smart_lesson {task_key} has invalid correct_index"

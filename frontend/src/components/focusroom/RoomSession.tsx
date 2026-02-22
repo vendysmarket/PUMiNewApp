@@ -68,8 +68,26 @@ export function RoomSession({ room, onRoomUpdate, onExit }: RoomSessionProps) {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Refs for stable onended callbacks (avoid stale closures in TTS auto-advance)
+  const phaseRef = useRef(phase);
+  const scriptIdxRef = useRef(currentScriptIdx);
+  const scriptStepsRef = useRef(scriptSteps);
+  const isMutedRef = useRef(isMuted);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { scriptIdxRef.current = currentScriptIdx; }, [currentScriptIdx]);
+  useEffect(() => { scriptStepsRef.current = scriptSteps; }, [scriptSteps]);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+
   const dayIndex = room.currentDayIndex;
   const currentDay = room.plan.days.find(d => d.dayIndex === dayIndex);
+
+  // TTS locale: for language domain use target language, otherwise Hungarian
+  const ttsLocale =
+    room.config.domain === "language" && room.config.targetLanguage
+      ? room.config.targetLanguage.toLowerCase().startsWith("en") ? "en"
+        : room.config.targetLanguage.toLowerCase().startsWith("el") ? "el"
+        : "hu"
+      : "hu";
 
   // ── Step management ──
   const addStep = useCallback((type: StepEntry["type"], content: string, metadata?: StepEntry["metadata"]) => {
@@ -173,31 +191,48 @@ export function RoomSession({ room, onRoomUpdate, onExit }: RoomSessionProps) {
     }
   };
 
-  // ── TTS playback ──
-  const playTts = async (text: string) => {
-    if (isMuted) return;
+  // ── TTS playback (stable ref — auto-advances teach steps on audio end) ──
+  const playTts = useCallback(async (text: string) => {
+    if (isMutedRef.current) return;
     try {
-      const resp = await focusRoomApi.tts({ text: text.slice(0, 2000) });
+      const resp = await focusRoomApi.tts({ text: text.slice(0, 2000), locale: ttsLocale });
       if (resp.ok && resp.audio_base64) {
         const audio = new Audio(`data:${resp.content_type || "audio/mpeg"};base64,${resp.audio_base64}`);
         audioRef.current = audio;
         setIsAudioPlaying(true);
-        audio.onended = () => setIsAudioPlaying(false);
+
+        audio.onended = () => {
+          setIsAudioPlaying(false);
+          // Auto-advance to next teach script step when audio ends naturally
+          if (phaseRef.current === "teach") {
+            const nextIdx = scriptIdxRef.current + 1;
+            const steps = scriptStepsRef.current;
+            if (nextIdx < steps.length && steps[nextIdx]?.type !== "transition") {
+              const nextStep = steps[nextIdx];
+              addStep("tutor", nextStep.text);
+              setCurrentScriptIdx(nextIdx);
+              scriptIdxRef.current = nextIdx;
+              playTts(nextStep.text); // play next step
+            }
+          }
+        };
+
         audio.onerror = () => setIsAudioPlaying(false);
         await audio.play();
       }
     } catch (err) {
       console.error("[TTS] Failed:", err);
     }
-  };
+  }, [addStep, ttsLocale]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const stopAudio = () => {
+  const stopAudio = useCallback(() => {
     if (audioRef.current) {
+      audioRef.current.onended = null; // prevent auto-advance on manual stop
       audioRef.current.pause();
       audioRef.current = null;
     }
     setIsAudioPlaying(false);
-  };
+  }, []);
 
   // ── Phase transitions ──
   const handleNext = useCallback(async () => {
@@ -599,8 +634,8 @@ export function RoomSession({ room, onRoomUpdate, onExit }: RoomSessionProps) {
         />
       </div>
 
-      {/* Right sidebar: plan (hidden on mobile) */}
-      <div className="hidden md:block w-64 shrink-0">
+      {/* Right sidebar: plan */}
+      <div className="w-44 md:w-64 shrink-0">
         <PlanSidebar
           days={room.plan.days}
           currentDayIndex={dayIndex}

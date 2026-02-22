@@ -3,6 +3,7 @@
 // Manages room lifecycle: setup → session → completion
 
 import { useState, useEffect, useCallback } from "react";
+import { Lock } from "lucide-react";
 import { RoomSetup } from "@/components/focusroom/RoomSetup";
 import { RoomSession } from "@/components/focusroom/RoomSession";
 import { focusRoomApi } from "@/lib/focusRoomApi";
@@ -226,12 +227,12 @@ export default function FocusRoomPage() {
                     : "border-border/30 bg-card/20 opacity-50"
                 }`}
             >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0
                 ${isCompleted ? "bg-green-500/20 text-green-400" : isCurrent ? "bg-foreground/10 text-foreground" : "bg-secondary text-muted-foreground"}`}>
-                {isCompleted ? "✓" : day.dayIndex}
+                {isCompleted ? "✓" : isLocked ? <Lock className="w-3 h-3" /> : day.dayIndex}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{day.title}</p>
+                <p className={`text-sm font-medium truncate ${isLocked && !isCurrent ? "text-muted-foreground" : ""}`}>{day.title}</p>
               </div>
               {isCurrent && !isCompleted && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
