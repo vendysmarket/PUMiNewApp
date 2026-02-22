@@ -42,7 +42,7 @@ ELEVENLABS_API_KEY = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
 # Hardcoded voice fallbacks — used when env vars not set
 # Override in Railway: ELEVENLABS_VOICE_ID_HU / _EN
 _VOICE_FALLBACKS: dict[str, str] = {
-    "hu": "pMsXgVXv3BLzUgSXRplE",  # Matilda — clear multilingual, good for HU
+    "hu": "3DRcczmb3qwp5aVD9M9E",  # custom HU voice
     "en": "21m00Tcm4TlvDq8ikWAM",  # Rachel — natural EN
 }
 _VOICE_ENV_KEYS: dict[str, str] = {
